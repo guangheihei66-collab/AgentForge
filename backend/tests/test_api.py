@@ -57,3 +57,21 @@ def test_audit_query_endpoint():
 
     assert audit.status_code == 200
     assert any(event["event_type"] == "APPROVAL_CREATED" for event in audit.json())
+
+
+def test_create_plan_endpoint():
+    with TestClient(app) as client:
+        task_response = client.post(
+            "/tasks",
+            json={
+                "title": "Planner API task",
+                "goal": "Check release readiness",
+                "workspace": r"D:\AgentProjects\AgentForge",
+            },
+        )
+        task_id = task_response.json()["id"]
+        response = client.post(f"/tasks/{task_id}/plan", json={"context": {"release": "2.0"}})
+
+    assert response.status_code == 201
+    assert response.json()["validation_status"] == "VALID"
+    assert response.json()["plan_json"]["steps"][0]["tool"] == "git_read"
