@@ -28,4 +28,4 @@ Release Verification Agent: determine whether version 2.0 is ready for release.
 
 ## Current status
 
-Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation, Phase 3 backend foundation, Phase 4 Tool Gateway foundation, Phase 5 Approval Gateway and Audit Query, Phase 6 Planner Agent with Mock LLM integration, Phase 7 enterprise operations console, and Phase 8.1 enterprise packaging/demo preparation are complete. Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation, Phase 3 backend foundation, Phase 4 Tool Gateway foundation, Phase 5 Approval Gateway and Audit Query, Phase 6 Planner Agent with Mock LLM integration, Phase 7 enterprise operations console, Phase 8.1 enterprise packaging/demo preparation, and Phase 8.2 enterprise hardening documentation are complete. Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.

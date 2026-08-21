@@ -1,8 +1,10 @@
 """FastAPI application entrypoint for the AgentForge backend foundation."""
 
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes.health import router as health_router
 from .api.routes.approvals import router as approvals_router
@@ -19,6 +21,21 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="AgentForge Backend", version="0.1.0", lifespan=lifespan)
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "AGENTFORGE_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 app.include_router(health_router)
 app.include_router(tasks_router)
 app.include_router(approvals_router)

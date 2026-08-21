@@ -27,6 +27,17 @@ def test_root_endpoint():
     }
 
 
+def test_local_frontend_origin_is_allowed():
+    with TestClient(app) as client:
+        response = client.get(
+            "/health",
+            headers={"Origin": "http://localhost:5173"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
 def test_create_task_endpoint():
     with TestClient(app) as client:
         response = client.post(

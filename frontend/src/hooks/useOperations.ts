@@ -14,7 +14,7 @@ const demoDetail: TaskDetail = { task: demoTask, plans: [demoPlan], approvals: [
 export function useOperations() {
   const [tasks, setTasks] = useState<TaskSummary[]>([demoTask])
   const [approvals, setApprovals] = useState<ApprovalQueueItem[]>([demoApproval])
-  const [selectedId, setSelectedId] = useState(demoTask.id)
+  const [selectedId, setSelectedId] = useState<string | undefined>()
   const [detail, setDetail] = useState<TaskDetail>(demoDetail)
   const [report, setReport] = useState<Report>({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, evidence: [], audit_count: 2, execution_count: 0 })
   const [live, setLive] = useState(false)
@@ -22,9 +22,14 @@ export function useOperations() {
   const refresh = useCallback(async () => {
     try {
       const [nextTasks, nextApprovals] = await Promise.all([api.listTasks(), api.getPendingApprovals()])
-      setTasks(nextTasks); setApprovals(nextApprovals); setLive(true)
-      const id = selectedId || nextTasks[0]?.id
-      if (id) { setSelectedId(id); setDetail(await api.getTaskDetail(id)); setReport(await api.getReport(id)) }
+      setTasks(nextTasks); setApprovals(nextApprovals)
+      const id = selectedId && nextTasks.some(task => task.id === selectedId) ? selectedId : nextTasks[0]?.id
+      if (id) {
+        setSelectedId(id)
+        setDetail(await api.getTaskDetail(id))
+        setReport(await api.getReport(id))
+      }
+      setLive(true)
     } catch { setLive(false) }
   }, [selectedId])
 
@@ -38,7 +43,7 @@ export function useOperations() {
   async function act(action: 'approve' | 'reject' | 'cancel', approvalId?: string) {
     if (action === 'approve' && approvalId) await api.approve(approvalId)
     if (action === 'reject' && approvalId) await api.reject(approvalId, 'Plan requires operator changes')
-    if (action === 'cancel') await api.cancel(selectedId)
+    if (action === 'cancel' && selectedId) await api.cancel(selectedId)
     await refresh()
   }
 
