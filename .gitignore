@@ -1,0 +1,34 @@
+# Python
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Frontend and tooling
+node_modules/
+dist/
+build/
+.vite/
+
+# Runtime data
+database/
+logs/
+artifacts/
+traces/
+runtime/
+cache/
+test-runs/
+*.sqlite3
+*.db
+
+# Local editor and OS files
+.idea/
+.vscode/
+*.log
+Thumbs.db
+Desktop.ini

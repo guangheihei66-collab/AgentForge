@@ -1,0 +1,2 @@
+# Dependencies are intentionally not installed in Phase 2.
+# The dependency set will be decided during implementation planning.
