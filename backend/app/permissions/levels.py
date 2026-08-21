@@ -1,9 +1,5 @@
-"""Permission levels used by the Tool Gateway."""
+"""Backward-compatible import for the shared permission contract."""
 
-from enum import StrEnum
+from ..contracts.permissions import PermissionLevel
 
-
-class PermissionLevel(StrEnum):
-    SAFE_READ = "SAFE_READ"
-    APPROVED_EXEC = "APPROVED_EXEC"
-    DENIED = "DENIED"
+__all__ = ["PermissionLevel"]

@@ -5,7 +5,7 @@ import sys
 from typing import Any
 
 from .models import ToolDefinition
-from ..permissions.levels import PermissionLevel
+from ..contracts.permissions import PermissionLevel
 
 
 class TestTool:

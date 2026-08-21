@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ...permissions.levels import PermissionLevel
+from ...contracts.permissions import PermissionLevel
 from ...tools.defaults import build_default_registry
 from ...workspace.validator import WorkspaceValidator
 from .schemas import PlanContract

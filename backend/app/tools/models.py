@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ..permissions.levels import PermissionLevel
+from ..contracts.permissions import PermissionLevel
 
 
 class ToolExecutor(Protocol):

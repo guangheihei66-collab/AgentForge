@@ -12,7 +12,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from ..approvals.service import ApprovalService
-from ..permissions.levels import PermissionLevel
+from ..contracts.permissions import PermissionLevel
 from ..permissions.policy import PermissionPolicy
 from ..storage.orm import (
     AuditEventRecord,

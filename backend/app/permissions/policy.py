@@ -1,7 +1,13 @@
-"""Default-deny permission checks for registered tools."""
+"""Default-deny permission checks independent from tool implementations."""
 
-from ..tools.models import ToolDefinition
-from .levels import PermissionLevel
+from typing import Protocol
+
+from ..contracts.permissions import PermissionLevel
+
+
+class PermissionDefinition(Protocol):
+    name: str
+    permission_level: PermissionLevel
 
 
 class PermissionDenied(PermissionError):
@@ -11,7 +17,7 @@ class PermissionDenied(PermissionError):
 class PermissionPolicy:
     def check(
         self,
-        definition: ToolDefinition,
+        definition: PermissionDefinition,
         *,
         granted: PermissionLevel | None,
         approved: bool,
