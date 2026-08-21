@@ -1,0 +1,41 @@
+# AgentForge Final Release Checklist
+
+## Release structure
+
+The repository root is the release package. Its public-facing structure is:
+
+```text
+AgentForge/
+├── README.md
+├── README_CN.md
+├── start_agentforge.bat
+├── stop_agentforge.bat
+├── start/
+├── backend/
+├── frontend/
+├── docs/
+├── demo/
+└── screenshots/
+```
+
+`demo/` and `screenshots/` contain instructions and placeholders only. Binary captures, databases, logs, runtime files, and artifacts remain outside Git.
+
+## Release checks
+
+- [x] Backend tests pass.
+- [x] Frontend tests pass.
+- [x] Frontend production build passes.
+- [x] Startup script starts backend and frontend on the documented loopback ports.
+- [x] `/health` returns 200.
+- [x] `/` returns service information.
+- [x] UI dashboard loads live seeded data.
+- [x] Approval Center shows the version-bound plan.
+- [x] Task Detail shows execution, evidence, and audit records.
+- [x] Report shows the synthetic PASS result.
+- [x] No database, `.env`, secret, log, or temporary artifact is tracked.
+
+## Known demo boundary
+
+This is a portfolio MVP, not a production deployment. The UI intentionally demonstrates the governed approval and reporting surfaces with idempotent synthetic fixtures. Task creation and planning are backend API operations; execution remains behind the Tool Gateway and is not exposed as an unrestricted UI action. This preserves the security boundary and avoids adding an ungoverned shortcut solely for the demo.
+
+Production follow-up would include a managed database, authentication/RBAC, durable job execution, stronger observability, and a reviewed internal deployment model. Those are future phases, not release blockers for this portfolio package.
