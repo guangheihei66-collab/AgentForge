@@ -28,4 +28,4 @@ Release Verification Agent: determine whether version 2.0 is ready for release.
 
 ## Current status
 
-Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation created; implementation has not started.
+Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation, Phase 3 backend foundation, and Phase 4 Tool Gateway foundation are complete. Frontend, LLM integration, Docker, PostgreSQL, and write-capable tools have not started.

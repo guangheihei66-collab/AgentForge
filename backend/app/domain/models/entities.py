@@ -59,3 +59,17 @@ class Evidence:
     artifact_path: str | None
     content_hash: str | None
     created_at: datetime
+
+
+@dataclass(slots=True)
+class ToolExecution:
+    id: str
+    task_id: str
+    tool_name: str
+    action: str
+    status: str
+    result_summary: str | None
+    artifact_path: str | None
+    content_hash: str | None
+    started_at: datetime
+    finished_at: datetime | None

@@ -74,3 +74,18 @@ class EvidenceRecord(Base):
     artifact_path: Mapped[str | None] = mapped_column(String(1000))
     content_hash: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ToolExecutionRecord(Base):
+    __tablename__ = "tool_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    result_summary: Mapped[str | None] = mapped_column(Text)
+    artifact_path: Mapped[str | None] = mapped_column(String(1000))
+    content_hash: Mapped[str | None] = mapped_column(String(128))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
