@@ -1,8 +1,44 @@
 # AgentForge
 
-AgentForge is a self-hosted AI Agent governance platform for controlled engineering workflows.
+## Enterprise AI Agent Governance Platform
 
-It is designed as an enterprise operations console, not a chatbot. The operator can see what an Agent plans to do, approve or reject it, inspect governed tool execution, and trace every result back to evidence and audit records.
+AgentForge is a self-hosted control plane for deploying controlled AI Agents in enterprise engineering workflows. It is an operations console, not a chatbot: operators can inspect intent, approve risk, observe execution, and trace results back to evidence and audit records.
+
+## Overview
+
+AgentForge enables enterprises to combine:
+
+- Agent planning
+- Human approval
+- Secure tool execution
+- Evidence tracking
+- Auditability
+
+## Problem
+
+Unrestricted autonomous execution is difficult to trust in an enterprise. A model may propose useful actions while still having unclear permissions, unsafe execution paths, incomplete traceability, and poor support for audits or incident review. Prompting alone is not an authorization system.
+
+## Solution
+
+AgentForge separates model intent from execution authority:
+
+```text
+User Goal
+    ↓
+Planner Agent
+    ↓
+Plan Validator
+    ↓
+Approval Gateway
+    ↓
+Tool Gateway
+    ↓
+Execution
+    ↓
+Evidence + Audit
+    ↓
+Final Report
+```
 
 ## Core capability
 
@@ -31,38 +67,42 @@ Approval Gateway
     ↓
 Tool Gateway
     ↓
+Execution Records
+    ↓
 Evidence + Audit
     ↓
 Final Report
 ```
 
-## Demo flow
+The Planner produces a structured plan but cannot execute tools. The validator enforces the schema, tool allowlist, permission level, action policy, and workspace boundary. The Approval Gateway binds a human decision to a specific task, plan, and plan version. The Tool Gateway performs the final permission and workspace checks before invoking a registered tool. Operations endpoints aggregate the resulting execution, evidence, and audit records for the React console.
 
-The synthetic Release Verification Agent demonstrates:
+## Security Design
+
+- Permission boundary: default-deny policy with explicit `SAFE_READ` and `APPROVED_EXEC` levels.
+- Approval requirement: protected execution requires an approved, matching plan version.
+- Tool allowlist: only registered Git read, file read, and predefined test-profile tools are available.
+- Workspace boundary: system paths, user directories, secrets, and out-of-scope paths are rejected.
+- Audit logging: state transitions, approvals, tool executions, and evidence references are recorded with actors and correlation IDs.
+
+## Demo Scenario
+
+The Release Verification Agent answers: “Is Release v2.0 ready for release?” The synthetic demo demonstrates:
 
 ```text
-Create Task → Generate Plan → Approve → Execute Tools → Generate Report
+Create Task → Generate Plan → Approve → Execute → Collect Evidence → Generate Report
 ```
 
 The controlled tools are `git_read`, `file_read`, and the predefined `test_run` profiles. The permission layer is default-deny and the workspace boundary rejects secret, system, and out-of-scope paths.
 
-## MVP
-
-The primary demonstration is a Release Verification Agent:
-
-```text
-Goal -> Plan -> Human Approval -> Tool Gateway -> Evidence -> Audit -> Report
-```
-
-The MVP uses Python/FastAPI, React/TypeScript, SQLite, an API-based model, a custom state machine, and three allowlisted tools: Git, File, and Test.
-
-## Technology stack
+## Technology Stack
 
 Backend: Python, FastAPI, SQLAlchemy, SQLite, Pydantic.
 
 Frontend: React, TypeScript, Vite, Tailwind CSS.
 
-Agent boundary: `LLMProvider` interface with a deterministic `MockLLMProvider`; real external LLM integration is intentionally not enabled in this demo package.
+AI boundary: `LLMProvider` interface with a deterministic `MockLLMProvider`; real external LLM integration is intentionally not enabled in this demo package.
+
+The MVP uses a custom state machine and three allowlisted tools: Git read, File read, and predefined Test profiles.
 
 ## Start the demo
 
@@ -81,10 +121,12 @@ npm test
 npm run build
 ```
 
-## Status
+## Status and boundaries
 
-Phase 7 enterprise operations console completed. Backend domain persistence, task workflow, validated planning, read-safe tools, permission checks, workspace validation, human approval, audit, evidence, and the React dashboard are implemented. Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+Phase 9 portfolio preparation completed. Backend domain persistence, task workflow, validated planning, read-safe tools, permission checks, workspace validation, human approval, audit, evidence, the React dashboard, one-click startup, and enterprise demo documentation are implemented. Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 Runtime data belongs under `D:\AgentProjectData\AgentForge\`, never in this source tree.
 
 See [README_CN.md](README_CN.md) for Chinese project notes, [docs/demo/DEMO_RUNBOOK.md](docs/demo/DEMO_RUNBOOK.md) for the interview demo sequence, and [docs/interview/PROJECT_STORY.md](docs/interview/PROJECT_STORY.md) for the interview explanation.
+
+Additional portfolio material is available in [technical_questions.md](docs/interview/technical_questions.md), [resume_material.md](docs/interview/resume_material.md), [demo_script.md](docs/demo/demo_script.md), and [screenshots.md](docs/demo/screenshots.md).
