@@ -30,5 +30,8 @@ test-runs/
 .idea/
 .vscode/
 *.log
+launcher/logs/*
+!launcher/logs/
+!launcher/logs/README.md
 Thumbs.db
 Desktop.ini
