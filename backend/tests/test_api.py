@@ -75,3 +75,32 @@ def test_create_plan_endpoint():
     assert response.status_code == 201
     assert response.json()["validation_status"] == "VALID"
     assert response.json()["plan_json"]["steps"][0]["tool"] == "git_read"
+
+
+def test_operations_read_endpoints_expose_console_data():
+    with TestClient(app) as client:
+        task_response = client.post(
+            "/tasks",
+            json={
+                "title": "Operations API task",
+                "goal": "Verify console read models",
+                "workspace": r"D:\AgentProjects\AgentForge",
+            },
+        )
+        task_id = task_response.json()["id"]
+        plan = client.post(f"/tasks/{task_id}/plan", json={}).json()
+        approval = client.post(
+            f"/tasks/{task_id}/approval",
+            json={"plan_id": plan["id"], "plan_version": plan["version"], "requested_by": "test"},
+        )
+
+        tasks = client.get("/tasks")
+        pending = client.get("/approvals/pending")
+        detail = client.get(f"/tasks/{task_id}/detail")
+        report = client.get(f"/tasks/{task_id}/report")
+
+    assert approval.status_code == 201
+    assert any(item["id"] == task_id for item in tasks.json())
+    assert pending.json()[0]["task_id"] == task_id
+    assert detail.json()["task"]["id"] == task_id
+    assert report.json()["readiness"] == "PENDING"

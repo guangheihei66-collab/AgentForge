@@ -1,0 +1,18 @@
+import { ArrowRight, CheckCircle2, Clock3, ListTodo, ShieldAlert, XCircle } from 'lucide-react'
+import { StatusPill, RiskPill } from '../components/StatusPill'
+import type { ApprovalQueueItem, TaskSummary } from '../types'
+
+export function Dashboard({ tasks, approvals, onTask, onApprovals }: { tasks: TaskSummary[]; approvals: ApprovalQueueItem[]; onTask: (id: string) => void; onApprovals: () => void }) {
+  const running = tasks.filter(t => t.status === 'RUNNING').length
+  const passed = tasks.filter(t => t.status === 'SUCCESS').length
+  const failed = tasks.filter(t => t.status === 'FAILED').length
+  return <section className="page-stack"><div className="page-heading"><div><div className="eyebrow">OPERATIONAL OVERVIEW</div><h2>Dashboard</h2><p>Understand what your Agents are planning, waiting on, and executing.</p></div><button className="button button-primary" onClick={onApprovals}>Review approvals <ArrowRight size={15} /></button></div>
+    <div className="metric-grid"><Metric icon={ListTodo} label="Total tasks" value={tasks.length} tone="blue" /><Metric icon={ShieldAlert} label="Pending approvals" value={approvals.length} tone="amber" /><Metric icon={Clock3} label="Running" value={running} tone="green" /><Metric icon={CheckCircle2} label="Passed" value={passed} tone="green" /><Metric icon={XCircle} label="Failed" value={failed} tone="red" /></div>
+    <div className="content-grid dashboard-grid"><div className="panel"><PanelTitle title="Recent tasks" action={`${tasks.length} tracked`} /><div className="task-table">{tasks.map(task => <button className="task-row" onClick={() => onTask(task.id)} key={task.id}><div className="task-icon"><ListTodo size={16} /></div><div className="task-name"><strong>{task.title}</strong><span>{task.goal}</span></div><StatusPill status={task.status} /><RiskPill value={task.status === 'WAITING_APPROVAL' ? 'Medium risk' : 'Low risk'} /><time>{new Date(task.updated_at).toLocaleString()}</time><ArrowRight size={16} /></button>)}</div></div><div className="panel approval-callout"><PanelTitle title="Approval queue" action={`${approvals.length} waiting`} /><div className="approval-list">{approvals.slice(0, 3).map(item => <button onClick={onApprovals} className="approval-row" key={item.id}><div><strong>{item.task_title}</strong><span>Plan version {item.plan_version} · {item.plan_json.steps.length} steps</span></div><StatusPill status="WAITING_APPROVAL" /></button>)}</div>{approvals.length === 0 && <Empty text="No approval requests waiting." />}<button className="text-button" onClick={onApprovals}>Open approval center <ArrowRight size={14} /></button></div></div>
+    <div className="panel activity-panel"><PanelTitle title="Recent activity" action="Audit trail" /><div className="activity-row"><span className="activity-dot amber" /><div><strong>Plan is waiting for human approval</strong><span>Release v2.0 Verification · planner-agent</span></div><time>just now</time></div><div className="activity-row"><span className="activity-dot green" /><div><strong>Plan validation completed</strong><span>All requested operations passed policy checks</span></div><time>4m ago</time></div></div>
+  </section>
+}
+
+function Metric({ icon: Icon, label, value, tone }: { icon: typeof ListTodo; label: string; value: number; tone: string }) { return <div className="metric"><span className={`metric-icon ${tone}`}><Icon size={18} /></span><div><span>{label}</span><strong>{value}</strong></div></div> }
+export function PanelTitle({ title, action }: { title: string; action?: string }) { return <div className="panel-title"><h3>{title}</h3>{action && <span>{action}</span>}</div> }
+export function Empty({ text }: { text: string }) { return <div className="empty-state">{text}</div> }

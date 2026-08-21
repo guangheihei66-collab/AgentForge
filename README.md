@@ -14,6 +14,6 @@ The MVP uses Python/FastAPI, React/TypeScript, SQLite, an API-based model, a cus
 
 ## Status
 
-Phase 6 Planner Agent and Mock LLM integration completed. Backend domain persistence, task workflow, validated planning, read-safe tools, permission checks, workspace validation, human approval, audit, and evidence are implemented. Real external LLM integration, frontend, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+Phase 7 enterprise operations console completed. Backend domain persistence, task workflow, validated planning, read-safe tools, permission checks, workspace validation, human approval, audit, evidence, and the React dashboard are implemented. Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 Runtime data belongs under `D:\AgentProjectData\AgentForge\`, never in this source tree.
