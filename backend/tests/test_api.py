@@ -13,6 +13,20 @@ def test_health_endpoint():
     assert response.json() == {"status": "ok"}
 
 
+def test_root_endpoint():
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "name": "AgentForge",
+        "service": "AI Agent Operations Platform",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
+
 def test_create_task_endpoint():
     with TestClient(app) as client:
         response = client.post(

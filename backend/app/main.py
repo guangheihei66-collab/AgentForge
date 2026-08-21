@@ -24,3 +24,14 @@ app.include_router(tasks_router)
 app.include_router(approvals_router)
 app.include_router(planning_router)
 app.include_router(operations_router)
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "name": "AgentForge",
+        "service": "AI Agent Operations Platform",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health",
+    }
