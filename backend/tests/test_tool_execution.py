@@ -1,12 +1,14 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from app.domain.states.task_state import TaskStatus
+from app.approvals.service import ApprovalService
 from app.permissions.levels import PermissionLevel
 from app.services.task_service import TaskService
-from app.storage.orm import AuditEventRecord, EvidenceRecord, ToolExecutionRecord
+from app.storage.orm import AuditEventRecord, EvidenceRecord, PlanRecord, ToolExecutionRecord
 from app.tools.defaults import build_default_registry
 from app.tools.gateway import ToolExecutionRequest, ToolGateway
 from app.tools.models import ToolDefinition
@@ -36,6 +38,28 @@ def make_task(session):
     )
 
 
+def approve_plan(session, task):
+    TaskService(session).transition_task(task.id, TaskStatus.PLANNING)
+    plan = PlanRecord(
+        task_id=task.id,
+        version=1,
+        plan_json={"steps": []},
+        validation_status="VALID",
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(plan)
+    session.flush()
+    session.commit()
+    approval = ApprovalService(session).create_request(
+        task_id=task.id,
+        plan_id=plan.id,
+        plan_version=plan.version,
+        requested_by="test",
+    )
+    ApprovalService(session).approve(approval.id, actor="tester")
+    return plan
+
+
 def test_git_read_success(db_session):
     task = make_task(db_session)
     result = make_gateway(db_session).execute(
@@ -59,6 +83,7 @@ def test_git_read_success(db_session):
 
 def test_test_profile_execution(db_session):
     task = make_task(db_session)
+    plan = approve_plan(db_session, task)
     result = make_gateway(db_session).execute(
         ToolExecutionRequest(
             task_id=task.id,
@@ -68,6 +93,8 @@ def test_test_profile_execution(db_session):
             parameters={"profile": "smoke"},
             granted_permission=PermissionLevel.APPROVED_EXEC,
             approved=True,
+            plan_id=plan.id,
+            plan_version=plan.version,
         )
     )
 

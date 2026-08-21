@@ -34,6 +34,7 @@ class Approval:
     id: str
     task_id: str
     plan_id: str
+    plan_version: int
     decision: str
     approver: str
     reason: str | None

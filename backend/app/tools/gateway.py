@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from ..approvals.service import ApprovalService
 from ..permissions.levels import PermissionLevel
 from ..permissions.policy import PermissionPolicy
 from ..storage.orm import (
@@ -33,6 +34,8 @@ class ToolExecutionRequest:
     parameters: dict[str, Any]
     granted_permission: PermissionLevel | None = None
     approved: bool = False
+    plan_id: str | None = None
+    plan_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +96,12 @@ class ToolGateway:
                 granted=request.granted_permission,
                 approved=request.approved,
             )
+            if definition.permission_level == PermissionLevel.APPROVED_EXEC:
+                ApprovalService(self.session).assert_execution_allowed(
+                    task_id=request.task_id,
+                    plan_id=request.plan_id,
+                    plan_version=request.plan_version,
+                )
             workspace = self.workspace_validator.validate_workspace(request.workspace)
             result = definition.executor.execute(
                 request.action, request.parameters, str(workspace)

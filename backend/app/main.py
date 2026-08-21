@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .api.routes.health import router as health_router
+from .api.routes.approvals import router as approvals_router
 from .api.routes.tasks import router as tasks_router
 from .storage.database import init_db
 
@@ -18,3 +19,4 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="AgentForge Backend", version="0.1.0", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(tasks_router)
+app.include_router(approvals_router)
