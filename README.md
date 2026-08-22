@@ -104,7 +104,15 @@ AI boundary: `LLMProvider` interface with a deterministic `MockLLMProvider`; rea
 
 The MVP uses a custom state machine and three allowlisted tools: Git read, File read, and predefined Test profiles.
 
-## Start the demo
+## Quick Start
+
+Windows:
+
+Double-click [`Start-AgentForge.bat`](Start-AgentForge.bat) to start AgentForge.
+
+Double-click [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop AgentForge processes.
+
+These root-level files are wrappers around the existing `launcher/` scripts. Runtime logs and PID files remain under `D:\AgentProjectData\AgentForge\runtime`.
 
 On Windows, double-click [`start/start_agentforge.bat`](start/start_agentforge.bat). It initializes idempotent synthetic demo data under `D:\AgentProjectData\AgentForge\`, starts the backend and frontend, and opens the dashboard.
 
