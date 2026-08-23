@@ -43,6 +43,7 @@ class ProjectRead(BaseModel):
     status: str
     allowed_capability_ids: list[str]
     config_version: int
+    recent_task_count: int = 0
     created_at: datetime
     updated_at: datetime
 

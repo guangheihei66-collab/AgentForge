@@ -435,6 +435,10 @@ def test_project_api_and_task_payload_are_strict(db_session, local_project_root)
     })
     assert created.status_code == 201
     assert created.json()["project_id"] == project["id"]
+    listed = client.get("/projects").json()
+    assert next(item for item in listed if item["id"] == project["id"])[
+        "recent_task_count"
+    ] == 1
 
 
 def test_archived_project_blocks_new_tasks(db_session, local_project_root):

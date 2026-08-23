@@ -42,7 +42,7 @@ export function Projects({ projects, onOpen, onCreate, onValidate }: {
     <div className="page-heading"><div><div className="eyebrow">LOCAL EXECUTION BOUNDARIES</div><h2>Projects</h2><p>Bind every new task to one validated workspace and an explicit capability policy.</p></div></div>
     <div className="project-layout">
       <div className="panel"><PanelTitle title="Local projects" action={`${projects.length} configured`} />
-        <div className="project-list">{projects.map(project => <button className="project-row" key={project.id} onClick={() => onOpen(project.id)}><FolderKanban size={18} /><div><strong>{project.name}</strong><span>{project.workspace_root}</span></div><span>{project.environment}</span><b className={`project-status ${project.status.toLowerCase()}`}>{project.status}</b><ArrowRight size={15} /></button>)}</div>
+        <div className="project-list">{projects.map(project => <button className="project-row" key={project.id} onClick={() => onOpen(project.id)}><FolderKanban size={18} /><div><strong>{project.name}</strong><span>{project.workspace_root}</span></div><span className="project-activity">{project.environment}<small>{project.recent_task_count} recent task{project.recent_task_count === 1 ? '' : 's'}</small></span><b className={`project-status ${project.status.toLowerCase()}`}>{project.status}</b><ArrowRight size={15} /></button>)}</div>
         {projects.length === 0 && <Empty text="No local Projects configured." />}
       </div>
       <form className="panel project-form" onSubmit={submit}><PanelTitle title="Create Project" />

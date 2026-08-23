@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
 import type { ApprovalQueueItem, CapabilityPlanStep, Plan, ProjectDetail, ProjectSummary, ProviderStatus, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
 
-const demoProject: ProjectDetail = { id: 'demo-project', name: 'AgentForge', description: 'Local Agent operations workspace.', workspace_root: 'D:/AgentProjects/AgentForge', environment: 'development', status: 'ACTIVE', allowed_capability_ids: ['repository_state', 'project_metadata', 'test_verification'], config_version: 1, created_at: '2026-08-21T14:00:00Z', updated_at: '2026-08-21T14:00:00Z', recent_tasks: [] }
+const demoProject: ProjectDetail = { id: 'demo-project', name: 'AgentForge', description: 'Local Agent operations workspace.', workspace_root: 'D:/AgentProjects/AgentForge', environment: 'development', status: 'ACTIVE', allowed_capability_ids: ['repository_state', 'project_metadata', 'test_verification'], config_version: 1, recent_task_count: 1, created_at: '2026-08-21T14:00:00Z', updated_at: '2026-08-21T14:00:00Z', recent_tasks: [] }
 const demoTask: TaskSummary = { id: 'demo-release-v2', project_id: demoProject.id, title: 'Release v2.0 Verification', goal: 'Verify whether Release v2.0 is ready for release.', workspace: 'D:/AgentProjects/AgentForge', status: 'WAITING_APPROVAL', created_at: '2026-08-21T14:18:07Z', updated_at: '2026-08-21T14:32:01Z' }
 demoProject.recent_tasks = [demoTask]
 const demoSteps: CapabilityPlanStep[] = [

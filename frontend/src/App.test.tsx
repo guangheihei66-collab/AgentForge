@@ -67,6 +67,7 @@ describe('AgentForge operations console', () => {
     expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
     expect(screen.getByLabelText('Workspace path')).toBeInTheDocument()
     expect(screen.getByLabelText('repository_state')).not.toBeChecked()
+    expect(screen.getByText('1 recent task')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Create Project' })).toBeInTheDocument()
   })
 
@@ -89,6 +90,7 @@ describe('AgentForge operations console', () => {
       id: 'archived-project', name: 'Archived Project', description: null,
       workspace_root: 'D:/Archive', environment: 'test', status: 'ARCHIVED',
       allowed_capability_ids: ['repository_state'], config_version: 2,
+      recent_task_count: 0,
       created_at: '2026-08-21T14:00:00Z', updated_at: '2026-08-21T15:00:00Z',
       recent_tasks: [],
     }

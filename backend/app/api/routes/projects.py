@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from dataclasses import asdict
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from ...projects.service import ProjectConflictError, ProjectService
 from ...schemas.project import (ArchiveRequest, ProjectCreate, ProjectDetail,
@@ -14,14 +15,18 @@ from ...workspace.validator import WorkspaceValidationError, WorkspaceValidator
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-def _read(project) -> ProjectRead:
+def _read(project, recent_task_count: int = 0) -> ProjectRead:
     return ProjectRead(**{**asdict(project), "status": project.status.value,
-                          "allowed_capability_ids": list(project.allowed_capability_ids)})
+                          "allowed_capability_ids": list(project.allowed_capability_ids),
+                          "recent_task_count": recent_task_count})
 
 
 @router.get("", response_model=list[ProjectRead])
 def list_projects(db: Session = Depends(get_db)):
-    return [_read(p) for p in ProjectService(db).list()]
+    counts = dict(db.query(TaskRecord.project_id, func.count(TaskRecord.id))
+                  .filter(TaskRecord.project_id.is_not(None))
+                  .group_by(TaskRecord.project_id).all())
+    return [_read(p, counts.get(p.id, 0)) for p in ProjectService(db).list()]
 
 
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
@@ -44,7 +49,8 @@ def get_project(project_id: str, db: Session = Depends(get_db)):
     if project is None:
         raise HTTPException(404, "Project not found")
     tasks = db.query(TaskRecord).filter_by(project_id=project_id).order_by(TaskRecord.created_at.desc()).limit(20).all()
-    return ProjectDetail(**_read(project).model_dump(), recent_tasks=[
+    count = db.query(TaskRecord).filter_by(project_id=project_id).count()
+    return ProjectDetail(**_read(project, count).model_dump(), recent_tasks=[
         {"id": t.id, "title": t.title, "goal": t.goal, "status": t.status,
          "created_at": t.created_at.isoformat()} for t in tasks
     ])

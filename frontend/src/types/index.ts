@@ -54,6 +54,7 @@ export type ProjectSummary = {
   status: ProjectStatus
   allowed_capability_ids: string[]
   config_version: number
+  recent_task_count: number
   created_at: string
   updated_at: string
 }
