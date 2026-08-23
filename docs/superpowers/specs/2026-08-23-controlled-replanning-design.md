@@ -109,9 +109,9 @@ Plan v2 contains only the revised remaining steps, not already completed v1 step
 
 ## Approval Semantics
 
-Choose policy C: safe-read-only revisions may eventually continue automatically only when they are provably within an unchanged, previously approved authority envelope; any capability, permission, parameter, resolved snapshot, or execution-risk expansion requires approval.
+Phase 13 MVP uses one unambiguous rule: every newly created replan version requires a fresh human approval. No Plan v1 approval is reused for Plan v2, including safe-read-only revisions. The current approval model binds one plan ID/version and exact resolved snapshots and has no cross-version authority envelope, so any reuse would be an unsafe implicit shortcut.
 
-The current approval model binds one plan ID/version and exact resolved snapshots. It has no cross-version authority envelope. Therefore the Phase 13 MVP implements policy C conservatively: every valid replan version requires a new human approval. No Plan v1 approval is reused for Plan v2, including safe-read-only revisions. This is preferable to inventing an implicit shortcut. A future explicit envelope may enable the safe-read branch of policy C without changing its principle.
+Policy C remains a future evolution only: a later design may evaluate automatic continuation for safe-read revisions after introducing an explicit, provable authority envelope. Phase 13 does not implement that relaxation.
 
 ## Resolved Snapshot Interaction
 
