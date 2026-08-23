@@ -41,6 +41,19 @@ def _number(
     return value, None
 
 
+def _integer(
+    environ: Mapping[str, str], name: str, default: str, minimum: int, maximum: int
+) -> tuple[int, str | None]:
+    raw = environ.get(name, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return int(default), f"{name} is invalid"
+    if str(value) != str(raw).strip() or not minimum <= value <= maximum:
+        return value, f"{name} is outside the allowed range"
+    return value, None
+
+
 def _validated_base_url(value: str) -> tuple[str, str | None]:
     if not value:
         return "", "Base URL is required"
@@ -71,7 +84,7 @@ def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderCo
     timeout, timeout_error = _number(
         values, "AGENTFORGE_LLM_TIMEOUT_SECONDS", "30", 1, 120
     )
-    tokens, token_error = _number(
+    tokens, token_error = _integer(
         values, "AGENTFORGE_LLM_MAX_OUTPUT_TOKENS", "1200", 1, 4096
     )
     if provider == "mock":
@@ -79,7 +92,7 @@ def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderCo
         return ProviderConfig(
             provider=provider,
             timeout_seconds=timeout,
-            max_output_tokens=int(tokens),
+            max_output_tokens=tokens,
             validation_error=error,
         )
     raw_url = values.get("AGENTFORGE_LLM_BASE_URL", "").strip()
@@ -99,7 +112,7 @@ def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderCo
         model=model,
         api_key=api_key,
         timeout_seconds=timeout,
-        max_output_tokens=int(tokens),
+        max_output_tokens=tokens,
         validation_error=error,
     )
 

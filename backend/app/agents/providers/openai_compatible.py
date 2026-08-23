@@ -60,7 +60,7 @@ class OpenAICompatibleProvider:
         )
 
     def test_connection(self) -> LLMResponse:
-        return self._complete(
+        response = self._complete(
             prompt="Return a JSON object with status set to ok.",
             output_schema={
                 "type": "object",
@@ -71,6 +71,9 @@ class OpenAICompatibleProvider:
             schema_name="agentforge_connection",
             max_tokens=32,
         )
+        if response.payload != {"status": "ok"}:
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE)
+        return response
 
     def _complete(
         self,
@@ -230,7 +233,7 @@ class OpenAICompatibleProvider:
             payload = json.loads(content) if isinstance(content, str) else content
             if not isinstance(payload, dict):
                 raise TypeError
-        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+        except (json.JSONDecodeError, UnicodeDecodeError, KeyError, IndexError, TypeError):
             raise ProviderError(
                 ProviderErrorCategory.INVALID_RESPONSE,
                 safe_message="LLM provider returned invalid structured data",

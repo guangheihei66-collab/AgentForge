@@ -37,6 +37,8 @@ The local launcher allows only the two loopback frontend origins by default. For
 
 Use [.env.example](../../.env.example) as the documented variable list. `.env` is ignored by Git. API keys, tokens, and certificates must be injected by the host secret manager or service environment and must never be copied into source, demo data, or logs.
 
+The default planning provider is `mock`, which performs no network calls. The optional `openai-compatible` provider requires `AGENTFORGE_LLM_BASE_URL`, `AGENTFORGE_LLM_MODEL`, and `AGENTFORGE_LLM_API_KEY`. Use HTTPS except for loopback development endpoints. Timeout and output-token limits are bounded by the application; redirects are disabled and provider responses are size-limited. The console reports only secret-free configuration and connection state. Provider settings are not persisted to SQLite.
+
 ## Operational boundary
 
 The deployment exposes a read-safe Tool Gateway with approval authorization. It does not permit arbitrary shell commands, destructive file operations, Git writes, local model downloads, or Docker runtime management.

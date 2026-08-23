@@ -19,6 +19,17 @@ class ProviderErrorCategory(StrEnum):
 class ProviderError(RuntimeError):
     """Safe provider failure that never retains raw upstream details."""
 
+    _SAFE_MESSAGES = {
+        ProviderErrorCategory.NOT_CONFIGURED: "LLM provider is not configured",
+        ProviderErrorCategory.AUTHENTICATION_FAILED: "LLM provider authentication failed",
+        ProviderErrorCategory.RATE_LIMITED: "LLM provider rate limit reached",
+        ProviderErrorCategory.TIMEOUT: "LLM provider request timed out",
+        ProviderErrorCategory.NETWORK_ERROR: "LLM provider network request failed",
+        ProviderErrorCategory.UPSTREAM_SERVER_ERROR: "LLM provider server request failed",
+        ProviderErrorCategory.INVALID_RESPONSE: "LLM provider returned an invalid response",
+        ProviderErrorCategory.RESPONSE_TOO_LARGE: "LLM provider response exceeded the size limit",
+    }
+
     def __init__(
         self,
         category: ProviderErrorCategory,
@@ -28,10 +39,12 @@ class ProviderError(RuntimeError):
         attempt_count: int = 1,
         duration_ms: int = 0,
     ) -> None:
-        super().__init__(safe_message)
+        del safe_message  # Caller or upstream text must never be retained.
+        public_message = self._SAFE_MESSAGES[category]
+        super().__init__(public_message)
         self.category = category
         self.retryable = retryable
-        self.safe_message = safe_message
+        self.safe_message = public_message
         self.attempt_count = attempt_count
         self.duration_ms = duration_ms
 

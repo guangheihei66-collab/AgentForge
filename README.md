@@ -102,7 +102,9 @@ Backend: Python, FastAPI, SQLAlchemy, SQLite, Pydantic.
 
 Frontend: React, TypeScript, Vite, Tailwind CSS.
 
-AI boundary: `LLMProvider` interface with a deterministic `MockLLMProvider`; real external LLM integration is intentionally not enabled in this demo package.
+AI boundary: a unified `LLMProvider` interface supports the deterministic mock and a bounded OpenAI-compatible HTTP transport. The model proposes semantic capabilities only; validation, concrete tool resolution, approval, Runtime, and ToolGateway remain application-controlled.
+
+Provider selection is environment-only. The default is `AGENTFORGE_LLM_PROVIDER=mock`. To opt into the OpenAI-compatible transport, set `AGENTFORGE_LLM_PROVIDER=openai-compatible` plus the base URL, model, and API key documented in `.env.example`. Non-local endpoints require HTTPS. Credentials are never returned by the status API or editable in the console, and connection tests run only after an explicit operator action.
 
 The MVP uses a custom state machine and three allowlisted tools: Git read, File read, and predefined Test profiles.
 
@@ -133,7 +135,7 @@ npm run build
 
 ## Status and boundaries
 
-Phase 11.2 capability-based tool selection is implemented. Backend domain persistence, task workflow, capability-first planning, deterministic resolution, approval-bound execution snapshots, read-safe tools, permission checks, workspace validation, audit, evidence, the React dashboard, and one-click startup are implemented. The initial mappings are `repository_state -> git_read`, `project_metadata -> file_read`, and `test_verification -> test_run`. Legacy concrete-tool plans remain readable but cannot execute through the Phase 11.2 Runtime. Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+Phase 12 real LLM provider integration is implemented behind the existing governed planning boundary. It adds bounded OpenAI-compatible transport, strict configuration validation, safe provider status and explicit connection testing, while preserving deterministic capability resolution and approval-bound execution. The mock provider remains the default. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 Runtime data belongs under `D:\AgentProjectData\AgentForge\`, never in this source tree.
 

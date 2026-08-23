@@ -117,6 +117,7 @@ def test_rejected_base_urls_fail_closed_without_secret(url: str):
         ("AGENTFORGE_LLM_TIMEOUT_SECONDS", "invalid"),
         ("AGENTFORGE_LLM_MAX_OUTPUT_TOKENS", "0"),
         ("AGENTFORGE_LLM_MAX_OUTPUT_TOKENS", "4097"),
+        ("AGENTFORGE_LLM_MAX_OUTPUT_TOKENS", "1200.9"),
         ("AGENTFORGE_LLM_MAX_OUTPUT_TOKENS", "invalid"),
     ],
 )
@@ -338,6 +339,7 @@ def test_response_body_over_64_kib_is_rejected_without_retry():
     "response",
     [
         httpx.Response(200, content=b"not-json"),
+        httpx.Response(200, content=b"\xff\xfe"),
         httpx.Response(200, json={"choices": []}),
         httpx.Response(200, json={"choices": [{"message": {"content": "[]"}}]}),
     ],
@@ -379,6 +381,20 @@ def test_connection_check_uses_fixed_non_plan_payload_and_small_budget():
     serialized = json.dumps(captured["body"])
     assert "repository" not in serialized.lower()
     assert "business" not in serialized.lower()
+
+
+@pytest.mark.parametrize("acknowledgement", [{}, {"status": "error"}])
+def test_connection_check_rejects_invalid_acknowledgement(acknowledgement):
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(lambda _: chat_response(acknowledgement)),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.test_connection()
+
+    assert exc.value.category == ProviderErrorCategory.INVALID_RESPONSE
 
 
 class FakeProvider:
@@ -666,3 +682,14 @@ def test_connection_failure_returns_only_safe_category(monkeypatch):
     assert response.json()["connection_status"] == "failed"
     assert response.json()["failure_category"] == "AUTHENTICATION_FAILED"
     assert SECRET not in response.text
+
+
+def test_provider_error_never_retains_caller_supplied_sensitive_text():
+    error = ProviderError(
+        ProviderErrorCategory.AUTHENTICATION_FAILED,
+        safe_message=SECRET,
+    )
+
+    assert SECRET not in str(error)
+    assert SECRET not in repr(error)
+    assert SECRET not in error.safe_message

@@ -28,11 +28,11 @@ Release Verification Agent: determine whether version 2.0 is ready for release.
 
 ## Current status
 
-Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation through Phase 10 release preparation are complete. Phase 11.1 added the deterministic AgentRuntime loop. Phase 11.2 adds capability-first planning, deterministic capability-to-tool resolution, approval-bound execution snapshots, registry fingerprints, and snapshot-only Runtime execution through the existing ToolGateway.
+Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation through Phase 10 release preparation are complete. Phase 11.1 added the deterministic AgentRuntime loop. Phase 11.2 added capability-first planning, deterministic capability-to-tool resolution, approval-bound execution snapshots, registry fingerprints, and snapshot-only Runtime execution through the existing ToolGateway. Phase 12 adds a bounded OpenAI-compatible planning provider while retaining the deterministic mock as default.
 
 The Phase 11.2 MVP capabilities are `repository_state -> git_read`, `project_metadata -> file_read`, and `test_verification -> test_run`. Resolution fails closed unless exactly one registered, enabled, permission-compatible, parameter-valid candidate exists. Legacy concrete-tool plans remain readable but cannot request Phase 11.2 approval or execute through the new Runtime.
 
-Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+The real provider is opt-in through environment configuration, fails closed when invalid, and cannot select concrete tools or bypass validation, approval, Runtime, or ToolGateway. Provider credentials and endpoint configuration are not persisted or exposed through the API. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 ## Important design decisions
 
@@ -42,6 +42,7 @@ Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools
 - Runtime verifies approved snapshots and cannot resolve or substitute tools.
 - ToolGateway remains the only execution boundary.
 - Existing SQLite databases receive the nullable approval snapshot column through an idempotent, non-destructive startup migration; live database recreation is forbidden.
+- LLM transport is bounded by timeout, response-size and output-token limits; retries apply only to transient failures and never persist secrets.
 
 ## Resolved bugs
 
@@ -49,5 +50,4 @@ Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools
 
 ## Next work
 
-- Create and verify a D-drive backup before the first upgraded backend launch migrates the live SQLite database.
-- Real external LLM integration and production platform capabilities remain future phases.
+- Production platform capabilities such as managed persistence, RBAC, and write-capable tools remain future phases.
