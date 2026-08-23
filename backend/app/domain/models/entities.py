@@ -10,6 +10,7 @@ from ..states.task_state import TaskStatus
 @dataclass(slots=True)
 class Task:
     id: str
+    project_id: str | None
     title: str
     goal: str
     workspace: str

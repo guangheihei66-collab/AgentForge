@@ -10,6 +10,7 @@ from ..orm import TaskRecord
 def to_domain(record: TaskRecord) -> Task:
     return Task(
         id=record.id,
+        project_id=record.project_id,
         title=record.title,
         goal=record.goal,
         workspace=record.workspace,
@@ -27,6 +28,7 @@ class TaskRepository:
     def create(self, task: Task) -> Task:
         record = TaskRecord(
             id=task.id,
+            project_id=task.project_id,
             title=task.title,
             goal=task.goal,
             workspace=task.workspace,
@@ -48,6 +50,7 @@ class TaskRepository:
         if record is None:
             raise LookupError(f"Task not found: {task.id}")
         record.title = task.title
+        record.project_id = task.project_id
         record.goal = task.goal
         record.workspace = task.workspace
         record.status = task.status.value

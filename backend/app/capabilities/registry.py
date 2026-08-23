@@ -29,6 +29,12 @@ class CapabilityRegistry:
     def ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._capabilities))
 
+    def subset(self, allowed_ids) -> "CapabilityRegistry":
+        selected = CapabilityRegistry()
+        for capability_id in sorted(set(allowed_ids)):
+            selected.register(self.require(capability_id))
+        return selected
+
 
 def build_default_capability_registry() -> CapabilityRegistry:
     registry = CapabilityRegistry()

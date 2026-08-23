@@ -10,6 +10,17 @@ def migrate_sqlite_schema(bind: Engine) -> None:
     if bind.url.get_backend_name() != "sqlite":
         return
     inspector = inspect(bind)
+    if "tasks" in inspector.get_table_names():
+        task_columns = {column["name"] for column in inspector.get_columns("tasks")}
+        if "project_id" not in task_columns:
+            with bind.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE tasks ADD COLUMN project_id VARCHAR(36) REFERENCES projects(id)"
+                )
+        if "project_id" not in {
+            column["name"] for column in inspect(bind).get_columns("tasks")
+        }:
+            raise RuntimeError("SQLite task project migration did not apply")
     if "approvals" not in inspector.get_table_names():
         return
     columns = {column["name"] for column in inspector.get_columns("approvals")}
