@@ -17,6 +17,7 @@ class RuntimeDecision(StrEnum):
     CONTINUE = "CONTINUE"
     COMPLETE = "COMPLETE"
     FAIL = "FAIL"
+    REPLAN = "REPLAN"
 
 
 @dataclass(slots=True)

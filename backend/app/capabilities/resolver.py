@@ -87,6 +87,13 @@ class CapabilityResolver:
             registry_fingerprint=registry_fingerprint(capability, tool),
         )
 
+    def normalize(
+        self, request: CapabilityRequest
+    ) -> tuple[tuple[str, str], ...]:
+        """Return application-owned canonical parameters without selecting a tool."""
+        capability = self.capabilities.require(request.capability_id)
+        return self._normalize(capability, request.parameters)
+
     def verify(self, snapshot: ResolvedExecutionSnapshot) -> None:
         capability = self.capabilities.require(snapshot.capability_id)
         if snapshot.resolved_tool_id not in capability.candidate_tool_ids:
