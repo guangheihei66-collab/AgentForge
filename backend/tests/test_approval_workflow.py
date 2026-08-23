@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 from app.approvals.service import ApprovalError, ApprovalService
+from app.capabilities.models import CapabilityRequest
+from app.capabilities.registry import build_default_capability_registry
+from app.capabilities.resolver import CapabilityResolver
 from app.domain.states.task_state import TaskStatus
 from app.permissions.levels import PermissionLevel
 from app.services.task_service import TaskService
@@ -34,12 +37,31 @@ def make_plan(session, task, version=1):
     plan = PlanRecord(
         task_id=task.id,
         version=version,
-        plan_json={"version": version, "steps": []},
+        plan_json={
+            "schema_version": 2,
+            "steps": [{
+                "step_id": "step-1",
+                "capability_id": "test_verification",
+                "parameters": {"profile": "smoke"},
+            }],
+            "resolved_steps": [],
+        },
         validation_status="VALID",
         created_at=datetime.now(timezone.utc),
     )
     session.add(plan)
     session.flush()
+    validator = WorkspaceValidator(REPO_ROOT)
+    snapshot = CapabilityResolver(
+        build_default_capability_registry(), build_default_registry(validator)
+    ).resolve(
+        task_id=task.id,
+        plan_id=plan.id,
+        plan_version=version,
+        step_id="step-1",
+        request=CapabilityRequest("test_verification", {"profile": "smoke"}),
+    )
+    plan.plan_json = {**plan.plan_json, "resolved_steps": [snapshot.to_dict()]}
     session.commit()
     return plan
 

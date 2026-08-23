@@ -50,6 +50,7 @@ class ApprovalRecord(Base):
     decision: Mapped[str] = mapped_column(String(32), nullable=False)
     approver: Mapped[str] = mapped_column(String(200), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
+    resolved_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

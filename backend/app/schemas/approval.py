@@ -1,6 +1,7 @@
 """Approval API contracts."""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,7 @@ class ApprovalRead(BaseModel):
     decision: str
     approver: str
     reason: str | None
+    resolved_snapshot: dict[str, Any] | None
     created_at: datetime
 
 

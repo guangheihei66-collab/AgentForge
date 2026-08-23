@@ -30,6 +30,7 @@ def _approval_read(approval, db: Session) -> ApprovalRead:
         decision=approval.decision,
         approver=approval.approver,
         reason=approval.reason,
+        resolved_snapshot=approval.resolved_snapshot,
         created_at=approval.created_at,
     )
 

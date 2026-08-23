@@ -56,6 +56,7 @@ def pending_approvals(db: Session = Depends(get_db)) -> list[ApprovalQueueRead]:
             requested_by=approval.approver,
             created_at=approval.created_at,
             plan_json=plan.plan_json,
+            resolved_snapshot=approval.resolved_snapshot,
         )
         for approval, task, plan in rows
     ]
@@ -72,7 +73,7 @@ def task_detail(task_id: str, db: Session = Depends(get_db)) -> TaskDetailRead:
     return TaskDetailRead(
         task=TaskSummaryRead.model_validate(task),
         plans=[{"id": p.id, "version": p.version, "plan_json": p.plan_json, "validation_status": p.validation_status, "created_at": p.created_at} for p in plans],
-        approvals=[{"id": a.id, "plan_id": a.plan_id, "decision": a.decision, "approver": a.approver, "reason": a.reason, "created_at": a.created_at} for a in approvals],
+        approvals=[{"id": a.id, "plan_id": a.plan_id, "decision": a.decision, "approver": a.approver, "reason": a.reason, "resolved_snapshot": a.resolved_snapshot, "created_at": a.created_at} for a in approvals],
         executions=[{"id": e.id, "tool_name": e.tool_name, "action": e.action, "status": e.status, "result_summary": e.result_summary, "artifact_path": e.artifact_path, "content_hash": e.content_hash, "started_at": e.started_at, "finished_at": e.finished_at} for e in executions],
         evidence=[{"id": e.id, "summary": e.summary, "artifact_path": e.artifact_path, "content_hash": e.content_hash, "created_at": e.created_at} for e in evidence],
         audit=[{"id": e.id, "event_type": e.event_type, "actor": e.actor, "payload_summary": e.payload_summary, "correlation_id": e.correlation_id, "created_at": e.created_at} for e in audit],

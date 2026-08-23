@@ -28,6 +28,7 @@ class ApprovalQueueRead(BaseModel):
     requested_by: str
     created_at: datetime
     plan_json: dict[str, Any]
+    resolved_snapshot: dict[str, Any] | None
 
 
 class TaskDetailRead(BaseModel):

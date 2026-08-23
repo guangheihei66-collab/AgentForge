@@ -41,7 +41,8 @@ def test_valid_plan_generated_and_validated(db_session):
 
     assert plan.version == 1
     assert plan.validation_status == "VALID"
-    assert plan.plan_json["steps"][0]["tool"] == "git_read"
+    assert plan.plan_json["steps"][0]["capability_id"] == "repository_state"
+    assert plan.plan_json["resolved_steps"][0]["resolved_tool_id"] == "git_read"
     assert db_session.get(TaskRecord, task.id).status == TaskStatus.WAITING_APPROVAL.value
     assert db_session.query(AuditEventRecord).filter_by(event_type="PLAN_CREATED").count() == 1
 
@@ -50,7 +51,7 @@ def test_valid_plan_generated_and_validated(db_session):
     "payload",
     [
         "not-json",
-        {"steps": [{"tool": "git_read"}]},
+        {"schema_version": 2, "steps": [{"capability_id": "repository_state"}]},
         {"steps": []},
     ],
 )
@@ -62,29 +63,29 @@ def test_invalid_json_or_missing_fields_rejected(payload):
 @pytest.mark.parametrize(
     "step",
     [
-        {"step_id": "1", "tool": "unknown", "action": "run", "risk_level": "low", "permission_level": "safe_read"},
-        {"step_id": "1", "tool": "git_read", "action": "status", "risk_level": "low", "permission_level": "denied"},
-        {"step_id": "1", "tool": "git_read", "action": "shell command", "risk_level": "low", "permission_level": "safe_read"},
-        {"step_id": "1", "tool": "file_read", "action": "write file", "risk_level": "medium", "permission_level": "safe_read"},
-        {"step_id": "1", "tool": "git_read", "action": "git push", "risk_level": "low", "permission_level": "safe_read"},
+        {"step_id": "1", "capability_id": "unknown", "parameters": {}},
+        {"step_id": "1", "tool": "git_read", "action": "status"},
+        {"step_id": "1", "capability_id": "repository_state", "parameters": {"command": "shell command"}},
+        {"step_id": "1", "capability_id": "project_metadata", "parameters": {"relative_path": "write file"}},
+        {"step_id": "1", "capability_id": "repository_state", "parameters": {"command": "git push"}},
     ],
 )
 def test_forbidden_plan_operations_rejected(step):
     with pytest.raises(PlanValidationError):
-        validator().validate({"steps": [step]}, REPO_ROOT)
+        validator().validate({"schema_version": 2, "steps": [step]}, REPO_ROOT)
 
 
 def test_plan_provider_json_string_is_supported():
     raw = json.dumps(
-        {"steps": [{"step_id": "1", "tool": "git_read", "action": "status", "risk_level": "low", "permission_level": "SAFE_READ"}]}
+        {"schema_version": 2, "steps": [{"step_id": "1", "capability_id": "repository_state", "parameters": {}}]}
     )
-    assert validator().validate(raw, REPO_ROOT).steps[0].tool == "git_read"
+    assert validator().validate(raw, REPO_ROOT).steps[0].capability_id == "repository_state"
 
 
 def test_planner_integration_saves_plan_and_waits_for_approval(db_session):
     task = make_task(db_session)
     provider = FixedProvider(
-        {"steps": [{"step_id": "1", "tool": "git_read", "action": "status", "risk_level": "low", "permission_level": "safe_read"}]}
+        {"schema_version": 2, "steps": [{"step_id": "1", "capability_id": "repository_state", "parameters": {}}]}
     )
     plan = PlannerAgent(db_session, provider, REPO_ROOT).create_plan(task.id, context={"release": "2.0"})
 

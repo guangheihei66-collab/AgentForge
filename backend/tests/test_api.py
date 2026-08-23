@@ -99,7 +99,8 @@ def test_create_plan_endpoint():
 
     assert response.status_code == 201
     assert response.json()["validation_status"] == "VALID"
-    assert response.json()["plan_json"]["steps"][0]["tool"] == "git_read"
+    assert response.json()["plan_json"]["steps"][0]["capability_id"] == "repository_state"
+    assert response.json()["plan_json"]["resolved_steps"][0]["resolved_tool_id"] == "git_read"
 
 
 def test_operations_read_endpoints_expose_console_data():

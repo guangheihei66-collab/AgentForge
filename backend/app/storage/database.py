@@ -46,8 +46,10 @@ def init_db() -> None:
         Path(engine.url.database).parent.mkdir(parents=True, exist_ok=True)
 
     from . import orm  # noqa: F401  # Register all ORM models with Base.
+    from .migrations import migrate_sqlite_schema
 
     Base.metadata.create_all(bind=engine)
+    migrate_sqlite_schema(engine)
 
 
 def get_db() -> Generator[Session, None, None]:

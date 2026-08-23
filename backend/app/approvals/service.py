@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from ..capabilities.models import ResolvedExecutionSnapshot
 from ..domain.states.task_state import TaskStatus
 from ..services.task_service import TaskService
 from ..storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, TaskRecord
@@ -45,6 +46,8 @@ class ApprovalService:
         if existing is not None:
             raise ApprovalError("An active approval already exists for this plan")
 
+        resolved_snapshot = self._snapshot_document(plan)
+
         if task.status == TaskStatus.PLANNING.value:
             TaskService(self.session).transition_task(
                 task_id,
@@ -59,6 +62,7 @@ class ApprovalService:
             decision="PENDING",
             approver="pending",
             reason=None,
+            resolved_snapshot=resolved_snapshot,
         )
         self.session.add(approval)
         self.session.flush()
@@ -101,6 +105,7 @@ class ApprovalService:
             "APPROVED",
             reason or "Approval granted",
         )
+        self._audit_snapshot_approved(task.id, approval, plan)
         self.session.commit()
         return approval
 
@@ -188,6 +193,85 @@ class ApprovalService:
         if task.status != TaskStatus.RUNNING.value:
             raise ApprovalError(f"Task is not executable: {task.status}")
 
+    def assert_snapshot_allowed(
+        self, snapshot: ResolvedExecutionSnapshot
+    ) -> ApprovalRecord:
+        task, _ = self._validate_binding(
+            snapshot.task_id, snapshot.plan_id, snapshot.plan_version
+        )
+        approval = (
+            self.session.query(ApprovalRecord)
+            .filter_by(
+                task_id=snapshot.task_id,
+                plan_id=snapshot.plan_id,
+                decision="APPROVED",
+            )
+            .order_by(ApprovalRecord.created_at.desc())
+            .first()
+        )
+        if approval is None or task.status != TaskStatus.RUNNING.value:
+            raise ApprovalError("Resolved execution is not approved")
+        approved = self._parse_approved_snapshots(approval)
+        matches = [item for item in approved if item.step_id == snapshot.step_id]
+        if len(matches) != 1 or matches[0] != snapshot:
+            raise ApprovalError("Resolved execution snapshot does not match approval")
+        return approval
+
+    @staticmethod
+    def _snapshot_document(plan: PlanRecord) -> dict:
+        payload = plan.plan_json
+        if payload.get("schema_version") != 2:
+            raise ApprovalError("Plan has no resolved Phase 11.2 execution snapshot")
+        steps = payload.get("steps")
+        resolved = payload.get("resolved_steps")
+        if not isinstance(steps, list) or not steps:
+            raise ApprovalError("Resolved plan must contain steps")
+        if not isinstance(resolved, list) or len(resolved) != len(steps):
+            raise ApprovalError("Resolved plan snapshot count does not match steps")
+        parsed: dict[str, ResolvedExecutionSnapshot] = {}
+        try:
+            for item in resolved:
+                snapshot = ResolvedExecutionSnapshot.from_dict(item)
+                if snapshot.step_id in parsed:
+                    raise ApprovalError("Resolved plan contains duplicate step IDs")
+                parsed[snapshot.step_id] = snapshot
+        except ValueError as exc:
+            raise ApprovalError(str(exc)) from exc
+        ordered: list[dict] = []
+        for step in steps:
+            if not isinstance(step, dict) or not isinstance(step.get("step_id"), str):
+                raise ApprovalError("Resolved plan step is invalid")
+            snapshot = parsed.get(step["step_id"])
+            if snapshot is None:
+                raise ApprovalError("Resolved plan step has no snapshot")
+            if (
+                snapshot.task_id != plan.task_id
+                or snapshot.plan_id != plan.id
+                or snapshot.plan_version != plan.version
+                or snapshot.capability_id != step.get("capability_id")
+                or snapshot.parameters_dict() != step.get("parameters", {})
+            ):
+                raise ApprovalError("Resolved plan snapshot binding is invalid")
+            ordered.append(snapshot.to_dict())
+        if len(parsed) != len(ordered):
+            raise ApprovalError("Resolved plan contains unmatched snapshots")
+        return {"schema_version": 1, "steps": ordered}
+
+    @staticmethod
+    def _parse_approved_snapshots(
+        approval: ApprovalRecord,
+    ) -> tuple[ResolvedExecutionSnapshot, ...]:
+        document = approval.resolved_snapshot
+        if not isinstance(document, dict) or document.get("schema_version") != 1:
+            raise ApprovalError("Approval has no resolved execution snapshot")
+        steps = document.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise ApprovalError("Approval resolved snapshot is invalid")
+        try:
+            return tuple(ResolvedExecutionSnapshot.from_dict(item) for item in steps)
+        except (TypeError, ValueError) as exc:
+            raise ApprovalError("Approval resolved snapshot is invalid") from exc
+
     def _validate_binding(
         self, task_id: str, plan_id: str, plan_version: int
     ) -> tuple[TaskRecord, PlanRecord]:
@@ -242,6 +326,30 @@ class ApprovalService:
                 task_id=task_id,
                 event_type=event_type,
                 actor=actor,
+                payload_summary=payload,
+                correlation_id=str(uuid4()),
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+
+    def _audit_snapshot_approved(
+        self, task_id: str, approval: ApprovalRecord, plan: PlanRecord
+    ) -> None:
+        payload = json.dumps(
+            {
+                "approval_id": approval.id,
+                "task_id": task_id,
+                "plan_id": plan.id,
+                "plan_version": plan.version,
+                "resolved_snapshot": approval.resolved_snapshot,
+            },
+            ensure_ascii=False,
+        )[:20_000]
+        self.session.add(
+            AuditEventRecord(
+                task_id=task_id,
+                event_type="EXECUTION_SNAPSHOT_APPROVED",
+                actor=approval.approver,
                 payload_summary=payload,
                 correlation_id=str(uuid4()),
                 created_at=datetime.now(timezone.utc),
