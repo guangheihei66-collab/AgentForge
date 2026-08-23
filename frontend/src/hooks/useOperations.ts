@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { ApprovalQueueItem, Plan, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
+import type { ApprovalQueueItem, CapabilityPlanStep, Plan, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
 
 const demoTask: TaskSummary = { id: 'demo-release-v2', title: 'Release v2.0 Verification', goal: 'Verify whether Release v2.0 is ready for release.', workspace: 'D:/AgentProjects/AgentForge', status: 'WAITING_APPROVAL', created_at: '2026-08-21T14:18:07Z', updated_at: '2026-08-21T14:32:01Z' }
-const demoSteps = [
+const demoSteps: CapabilityPlanStep[] = [
   { step_id: 'step-1', capability_id: 'repository_state' as const, parameters: {} },
   { step_id: 'step-2', capability_id: 'project_metadata' as const, parameters: { relative_path: 'PROJECT_CONTEXT.md' } },
   { step_id: 'step-3', capability_id: 'test_verification' as const, parameters: { profile: 'smoke' } },

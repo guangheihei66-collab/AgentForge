@@ -74,7 +74,7 @@ Evidence + Audit
 Final Report
 ```
 
-The Planner produces a structured plan but cannot execute tools. The validator enforces the schema, tool allowlist, permission level, action policy, and workspace boundary. The Approval Gateway binds a human decision to a specific task, plan, and plan version. The Tool Gateway performs the final permission and workspace checks before invoking a registered tool. Operations endpoints aggregate the resulting execution, evidence, and audit records for the React console.
+The Planner produces semantic capability requirements but cannot choose or execute concrete tools. The application-owned resolver requires exactly one registered, enabled, permission-compatible, parameter-valid candidate and fails closed otherwise. The Approval Gateway binds a human decision to the capability, resolved tool, normalized parameters, registry fingerprint, task, plan, and plan version. AgentRuntime consumes that approved snapshot, while the Tool Gateway remains the final permission and workspace boundary. Operations endpoints expose execution, evidence, and audit records to the React console.
 
 ## Security Design
 
@@ -83,6 +83,8 @@ The Planner produces a structured plan but cannot execute tools. The validator e
 - Tool allowlist: only registered Git read, file read, and predefined test-profile tools are available.
 - Workspace boundary: system paths, user directories, secrets, and out-of-scope paths are rejected.
 - Audit logging: state transitions, approvals, tool executions, and evidence references are recorded with actors and correlation IDs.
+- Capability authority: concrete tool selection is deterministic and application-owned; there is no LLM ranking or implicit tie-break.
+- Approval drift protection: changed capability, tool, parameters, plan version, or execution-relevant registry semantics invalidates execution.
 
 ## Demo Scenario
 
@@ -131,7 +133,7 @@ npm run build
 
 ## Status and boundaries
 
-Phase 9 portfolio preparation completed. Backend domain persistence, task workflow, validated planning, read-safe tools, permission checks, workspace validation, human approval, audit, evidence, the React dashboard, one-click startup, and enterprise demo documentation are implemented. Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+Phase 11.2 capability-based tool selection is implemented. Backend domain persistence, task workflow, capability-first planning, deterministic resolution, approval-bound execution snapshots, read-safe tools, permission checks, workspace validation, audit, evidence, the React dashboard, and one-click startup are implemented. The initial mappings are `repository_state -> git_read`, `project_metadata -> file_read`, and `test_verification -> test_run`. Legacy concrete-tool plans remain readable but cannot execute through the Phase 11.2 Runtime. Real external LLM integration, Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 Runtime data belongs under `D:\AgentProjectData\AgentForge\`, never in this source tree.
 
