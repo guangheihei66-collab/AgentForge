@@ -76,6 +76,8 @@ Final Report
 
 The Planner produces semantic capability requirements but cannot choose or execute concrete tools. The application-owned resolver requires exactly one registered, enabled, permission-compatible, parameter-valid candidate and fails closed otherwise. The Approval Gateway binds a human decision to the capability, resolved tool, normalized parameters, registry fingerprint, task, plan, and plan version. AgentRuntime consumes that approved snapshot, while the Tool Gateway remains the final permission and workspace boundary. Operations endpoints expose execution, evidence, and audit records to the React console.
 
+Every new Task starts from a local Project. A Project owns one canonical local workspace, an explicit Capability allow-list, status, and execution configuration version. Policy defaults to empty. The application binds Project authority into Plan and Approval snapshots and revalidates it before approval and each Runtime/ToolGateway step; the model never selects workspace or Project authority.
+
 After bounded diagnostic evidence, Runtime may choose one of four decisions: `CONTINUE`, `COMPLETE`, `FAIL`, or `REPLAN`. A `REPLAN` pauses execution and lets the configured provider propose capability-only remaining steps. Application policy, validation, deterministic resolution, and a fresh human approval all run before a successor version can execute; the previous plan and approval never authorize that successor.
 
 ## Security Design
@@ -87,6 +89,8 @@ After bounded diagnostic evidence, Runtime may choose one of four decisions: `CO
 - Audit logging: state transitions, approvals, tool executions, and evidence references are recorded with actors and correlation IDs.
 - Capability authority: concrete tool selection is deterministic and application-owned; there is no LLM ranking or implicit tie-break.
 - Approval drift protection: changed capability, tool, parameters, plan version, or execution-relevant registry semantics invalidates execution.
+- Project isolation: ACTIVE Projects cannot share a canonical workspace; remote, UNC, traversal, junction/symlink, and cross-Project escapes are rejected.
+- Project lifecycle: archive is one-way and preserves history while blocking Task creation, pending approval, Runtime resume, and Replanning.
 
 ## Demo Scenario
 
@@ -138,6 +142,8 @@ npm run build
 ## Status and boundaries
 
 Phase 13 controlled re-planning is implemented behind the existing governed planning boundary. It allows at most two replans and twelve total steps across versions, with an 8 KiB context cap and 12 KiB complete-prompt cap. Every successor version, including safe-read-only plans, requires fresh approval of exact resolved snapshots. Plan v1 remains immutable and cannot authorize v2. Audit records contain bounded summaries and references, not Chain of Thought, raw model/tool output, or provider credentials. Mock remains deterministic and offline; a real-provider failure never silently falls back to Mock. Phase 13 requires no database migration or frontend setup. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+
+Phase 14 local Projects are implemented in the backend and React console. New API Tasks require `project_id`; clients cannot inject workspace or Tool authority. Legacy null-Project history remains readable but non-executable. The schema migration is idempotent and tested only against isolated SQLite files. The live runtime database has not been migrated by this implementation task; that operation requires a separate approved backup and migration.
 
 Runtime data belongs under `D:\AgentProjectData\AgentForge\`, never in this source tree.
 

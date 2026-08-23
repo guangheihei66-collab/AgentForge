@@ -28,13 +28,15 @@ Release Verification Agent: determine whether version 2.0 is ready for release.
 
 ## Current status
 
-Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation through Phase 10 release preparation are complete. Phase 11.1 added the deterministic AgentRuntime loop. Phase 11.2 added capability-first planning, deterministic capability-to-tool resolution, approval-bound execution snapshots, registry fingerprints, and snapshot-only Runtime execution through the existing ToolGateway. Phase 12 adds a bounded OpenAI-compatible planning provider while retaining the deterministic mock as default. Phase 13 adds controlled hybrid re-planning: Runtime makes only `CONTINUE`, `COMPLETE`, `FAIL`, or `REPLAN` decisions, while the model may propose capability-only successor steps after bounded diagnostic failures.
+Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation through Phase 10 release preparation are complete. Phase 11.1 added the deterministic AgentRuntime loop. Phase 11.2 added capability-first planning and approval-bound resolution. Phase 12 added the bounded OpenAI-compatible provider. Phase 13 added controlled hybrid re-planning. Phase 14 adds local Projects as execution-security boundaries: every new Task belongs to one ACTIVE Project with a canonical local workspace and an explicit semantic Capability allow-list.
 
 The Phase 11.2 MVP capabilities are `repository_state -> git_read`, `project_metadata -> file_read`, and `test_verification -> test_run`. Resolution fails closed unless exactly one registered, enabled, permission-compatible, parameter-valid candidate exists. Legacy concrete-tool plans remain readable but cannot request Phase 11.2 approval or execute through the new Runtime.
 
 The real provider is opt-in through environment configuration, fails closed when invalid, and cannot select concrete tools or bypass validation, approval, Runtime, or ToolGateway. Provider credentials and endpoint configuration are not persisted or exposed through the API. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 Re-planning is limited to two successor attempts and twelve total steps across plan versions. Replan context is capped at 8 KiB and the complete prompt at 12 KiB. Every successor version, including safe-read-only plans, requires a fresh approval bound to its exact resolved snapshots. Plan v1 remains immutable and its approval cannot authorize v2. Only bounded summaries, fingerprints, reason codes, and evidence references are audited; Chain of Thought, raw provider output, raw tool output, and provider credentials are not stored. Mock re-planning is deterministic and offline, and real-provider failures never silently fall back to Mock.
+
+Project Capability policy defaults to empty and future registry additions are never inherited. Plan and approval snapshots carry application-owned Project authority. Planner, Replanner, ApprovalService, Runtime, and ToolGateway revalidate it; SAFE_READ does not bypass it. Workspace, capability, version, fingerprint, and status drift invalidate earlier approvals. Name, description, and environment remain descriptive in Phase 14. Archived Projects and legacy null-Project Tasks remain readable but cannot start or continue execution.
 
 ## Important design decisions
 
@@ -47,6 +49,8 @@ Re-planning is limited to two successor attempts and twelve total steps across p
 - LLM transport is bounded by timeout, response-size and output-token limits; retries apply only to transient failures and never persist secrets.
 - Re-planning pauses the current version, creates an immutable successor only after policy and application validation, and requires new human approval before Runtime can resume.
 - Phase 13 adds no database migration, persistent status vocabulary, dependency, or frontend setup.
+- Phase 14 adds `projects` and nullable `tasks.project_id` through an idempotent, non-destructive migration. Applying it to the live database requires a separately approved backup-and-migration operation.
+- Project roots must be existing local directories; remote/UNC/device roots and traversal, sibling-prefix, symlink, junction, reparse, or cross-Project escapes fail closed.
 
 ## Resolved bugs
 
@@ -54,4 +58,5 @@ Re-planning is limited to two successor attempts and twelve total steps across p
 
 ## Next work
 
+- Run the separately approved live Phase 14 database backup and migration before using Projects with the existing runtime database.
 - Production platform capabilities such as managed persistence, RBAC, and write-capable tools remain future phases.

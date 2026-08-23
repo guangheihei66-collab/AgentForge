@@ -23,7 +23,7 @@ The launcher initializes the database, seeds idempotent synthetic demo records, 
 For an internal Windows or Linux host:
 
 1. Provision the Python virtual environment and frontend dependencies during a controlled build step.
-2. Set `AGENTFORGE_DATA_ROOT` to a dedicated writable data volume and `AGENTFORGE_WORKSPACE_ROOT` to the approved workspace.
+2. Set `AGENTFORGE_DATA_ROOT` to a dedicated writable data volume. Register each approved local workspace as an ACTIVE Project through the console or Project API; there is no process-wide workspace authority setting.
 3. Set `AGENTFORGE_DATABASE_URL` to the host-local SQLite path for a single-operator demo. Use a managed database only after a separately approved persistence phase.
 4. Bind the API and frontend to private network interfaces only; place TLS and access control at the internal reverse proxy.
 5. Run the backend and frontend under separate service identities with least-privilege filesystem access.
@@ -42,6 +42,10 @@ The default planning provider is `mock`, which performs no network calls. The op
 Controlled re-planning uses the same selected provider and never silently falls back from a real provider to Mock. Runtime decisions are limited to `CONTINUE`, `COMPLETE`, `FAIL`, and `REPLAN`. A replan may occur at most twice and all versions together may contain at most twelve steps; context is capped at 8 KiB and the complete prompt at 12 KiB. Each successor plan, including safe-read-only plans, must receive a fresh approval before execution. Earlier plan versions remain immutable, and an earlier approval cannot authorize a successor.
 
 Re-planning audit data is limited to bounded summaries, reason codes, fingerprints, and evidence references. Chain of Thought, raw provider responses, raw tool output, and provider credentials are not persisted. Phase 13 introduces no database migration, dependency installation, or frontend setup requirement.
+
+Phase 14 Project roots must be existing host-local directories reachable by the AgentForge service identity. Mapped remote drives, UNC/device paths, system/user roots, and filesystem escapes are rejected. Capability checkboxes are explicit and start unchecked. Archiving is one-way and disables new execution while preserving historical Tasks, approvals, evidence, audit, and reports.
+
+The Phase 14 SQLite migration adds `projects` and nullable `tasks.project_id`. Repository tests use isolated temporary databases only. Before applying the migration to an existing live database, stop AgentForge, create and verify a timestamped D-drive backup, then run the separately approved live-migration procedure. Do not delete or recreate the live database. Legacy null-Project Tasks remain readable but cannot execute.
 
 ## Operational boundary
 
