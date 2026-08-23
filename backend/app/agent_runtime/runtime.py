@@ -8,6 +8,9 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from ..approvals.service import ApprovalService
+from ..capabilities.models import ResolvedExecutionSnapshot
+from ..capabilities.registry import build_default_capability_registry
+from ..capabilities.resolver import CapabilityResolver
 from ..domain.states.task_state import TaskStatus
 from ..services.task_service import TaskService
 from ..storage.orm import AuditEventRecord, PlanRecord, TaskRecord
@@ -34,10 +37,14 @@ class AgentRuntime:
         self,
         session: Session,
         executor: RuntimeExecutor,
+        resolver: CapabilityResolver | None = None,
         observer: RuntimeObserver | None = None,
     ):
         self.session = session
         self.executor = executor
+        self.resolver = resolver or CapabilityResolver(
+            build_default_capability_registry(), executor.gateway.registry
+        )
         self.observer = observer or RuntimeObserver()
 
     def run(self, *, task_id: str, plan_id: str, plan_version: int) -> RuntimeResult:
@@ -50,8 +57,33 @@ class AgentRuntime:
         if plan.version != plan_version or plan.validation_status != "VALID":
             raise ValueError("Runtime requires the current valid plan version")
 
-        # This check intentionally applies to every runtime plan, including SAFE_READ steps.
-        ApprovalService(self.session).assert_execution_allowed(
+        payload = plan.plan_json
+        if payload.get("schema_version") != 2:
+            raise ValueError("Runtime requires a resolved schema version 2 plan")
+        steps = payload.get("steps")
+        resolved_items = payload.get("resolved_steps")
+        if (
+            not isinstance(steps, list)
+            or not steps
+            or not isinstance(resolved_items, list)
+            or len(resolved_items) != len(steps)
+        ):
+            raise ValueError("Runtime requires one resolved snapshot per plan step")
+        try:
+            resolved = {
+                item.step_id: item
+                for item in (
+                    ResolvedExecutionSnapshot.from_dict(raw)
+                    for raw in resolved_items
+                )
+            }
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Runtime received an invalid resolved snapshot") from exc
+        if len(resolved) != len(resolved_items):
+            raise ValueError("Runtime received duplicate resolved step IDs")
+
+        approval_service = ApprovalService(self.session)
+        approval_service.assert_execution_allowed(
             task_id=task_id,
             plan_id=plan_id,
             plan_version=plan_version,
@@ -59,21 +91,44 @@ class AgentRuntime:
         if task.status != TaskStatus.RUNNING.value:
             raise ValueError(f"Runtime requires a RUNNING task: {task.status}")
 
-        steps = list(plan.plan_json.get("steps", []))
-        snapshot = RuntimeSnapshot()
-        observations: list[RuntimeObservation] = []
-        self._transition(snapshot, task_id, RuntimeState.RUNNING, "Runtime started for approved plan")
+        ordered: list[tuple[dict[str, Any], ResolvedExecutionSnapshot]] = []
+        for step in steps:
+            if not isinstance(step, dict) or "tool" in step or "action" in step:
+                raise ValueError("Runtime rejects concrete-tool plan input")
+            step_id = step.get("step_id")
+            resolved_step = resolved.get(step_id)
+            if resolved_step is None:
+                raise ValueError("Runtime plan step is unresolved")
+            if (
+                resolved_step.task_id != task_id
+                or resolved_step.plan_id != plan_id
+                or resolved_step.plan_version != plan_version
+                or resolved_step.capability_id != step.get("capability_id")
+                or resolved_step.parameters_dict() != step.get("parameters", {})
+            ):
+                raise ValueError("Runtime resolved snapshot drifted from the plan")
+            approval_service.assert_snapshot_allowed(resolved_step)
+            self.resolver.verify(resolved_step)
+            ordered.append((step, resolved_step))
 
-        for index, step in enumerate(steps):
-            snapshot.current_step_id = str(step["step_id"])
-            remaining = len(steps) - index - 1
+        runtime_snapshot = RuntimeSnapshot()
+        observations: list[RuntimeObservation] = []
+        self._transition(runtime_snapshot, task_id, RuntimeState.RUNNING, "Runtime started for approved plan")
+
+        for index, (step, resolved_step) in enumerate(ordered):
+            runtime_snapshot.current_step_id = resolved_step.step_id
+            remaining = len(ordered) - index - 1
             try:
+                capability = self.resolver.capabilities.require(
+                    resolved_step.capability_id
+                )
                 result = self.executor.execute(
                     task_id=task_id,
                     plan_id=plan_id,
                     plan_version=plan_version,
                     workspace=task.workspace,
-                    step=step,
+                    snapshot=resolved_step,
+                    granted_permission=capability.required_permission,
                 )
             except (PermissionError, LookupError) as exc:
                 # Authorization and binding failures must remain visible to the caller.
@@ -88,24 +143,25 @@ class AgentRuntime:
                 )
 
             self._transition(
-                snapshot,
+                runtime_snapshot,
                 task_id,
                 RuntimeState.OBSERVING,
                 f"Observing result for step {step['step_id']}",
             )
-            self._audit_observation(task_id, snapshot, step, result)
+            self._audit_execution(task_id, resolved_step, result)
+            self._audit_observation(task_id, runtime_snapshot, resolved_step, result)
             observation = self.observer.observe(
-                step=step,
+                snapshot=resolved_step,
                 result=result,
                 remaining_steps=remaining,
             )
             observations.append(observation)
-            self._audit_decision(task_id, snapshot, observation)
+            self._audit_decision(task_id, runtime_snapshot, observation)
 
             if observation.decision == RuntimeDecision.CONTINUE:
-                snapshot.completed_steps += 1
+                runtime_snapshot.completed_steps += 1
                 self._transition(
-                    snapshot,
+                    runtime_snapshot,
                     task_id,
                     RuntimeState.RUNNING,
                     observation.decision_summary,
@@ -113,7 +169,7 @@ class AgentRuntime:
                 continue
 
             if observation.decision == RuntimeDecision.COMPLETE:
-                snapshot.completed_steps += 1
+                runtime_snapshot.completed_steps += 1
                 TaskService(self.session).transition_task(
                     task_id,
                     TaskStatus.SUCCESS,
@@ -121,7 +177,7 @@ class AgentRuntime:
                     reason=observation.decision_summary,
                 )
                 self._transition(
-                    snapshot,
+                    runtime_snapshot,
                     task_id,
                     RuntimeState.COMPLETED,
                     observation.decision_summary,
@@ -130,9 +186,9 @@ class AgentRuntime:
                     task_id=task_id,
                     plan_id=plan_id,
                     plan_version=plan_version,
-                    state=snapshot.state,
+                    state=runtime_snapshot.state,
                     decision=observation.decision,
-                    completed_steps=snapshot.completed_steps,
+                    completed_steps=runtime_snapshot.completed_steps,
                     observations=tuple(observations),
                 )
 
@@ -143,7 +199,7 @@ class AgentRuntime:
                 reason=observation.decision_summary,
             )
             self._transition(
-                snapshot,
+                runtime_snapshot,
                 task_id,
                 RuntimeState.FAILED,
                 observation.decision_summary,
@@ -152,9 +208,9 @@ class AgentRuntime:
                 task_id=task_id,
                 plan_id=plan_id,
                 plan_version=plan_version,
-                state=snapshot.state,
+                state=runtime_snapshot.state,
                 decision=observation.decision,
-                completed_steps=snapshot.completed_steps,
+                completed_steps=runtime_snapshot.completed_steps,
                 observations=tuple(observations),
             )
 
@@ -188,10 +244,18 @@ class AgentRuntime:
         )
         self.session.commit()
 
-    def _audit_observation(self, task_id: str, snapshot: RuntimeSnapshot, step, result) -> None:
+    def _audit_observation(
+        self,
+        task_id: str,
+        snapshot: RuntimeSnapshot,
+        resolved: ResolvedExecutionSnapshot,
+        result,
+    ) -> None:
         payload = {
-            "step_id": str(step["step_id"]),
-            "tool_name": str(step["tool"]),
+            "step_id": resolved.step_id,
+            "capability_id": resolved.capability_id,
+            "tool_name": resolved.resolved_tool_id,
+            "registry_fingerprint": resolved.registry_fingerprint,
             "execution_id": result.execution_id,
             "status": result.status,
             "tool_result_summary": (result.summary or "")[:2_000],
@@ -202,6 +266,25 @@ class AgentRuntime:
                 event_type="RUNTIME_OBSERVATION",
                 actor="agent_runtime",
                 payload_summary=json.dumps(payload, ensure_ascii=False),
+                correlation_id=str(uuid4()),
+            )
+        )
+        self.session.commit()
+
+    def _audit_execution(
+        self, task_id: str, resolved: ResolvedExecutionSnapshot, result
+    ) -> None:
+        payload = {
+            **resolved.to_dict(),
+            "execution_id": result.execution_id,
+            "status": result.status,
+        }
+        self.session.add(
+            AuditEventRecord(
+                task_id=task_id,
+                event_type="RUNTIME_EXECUTION",
+                actor="agent_runtime",
+                payload_summary=json.dumps(payload, ensure_ascii=False)[:20_000],
                 correlation_id=str(uuid4()),
             )
         )

@@ -8,6 +8,9 @@ from app.agent_runtime.executor import RuntimeExecutor
 from app.agent_runtime.runtime import AgentRuntime
 from app.agent_runtime.state import RuntimeDecision, RuntimeState
 from app.approvals.service import ApprovalError, ApprovalService
+from app.capabilities.models import CapabilityRequest
+from app.capabilities.registry import build_default_capability_registry
+from app.capabilities.resolver import CapabilityResolver
 from app.domain.states.task_state import TaskStatus
 from app.permissions.levels import PermissionLevel
 from app.services.task_service import TaskService
@@ -31,25 +34,39 @@ def make_task(session):
     )
 
 
-def make_plan(session, task, steps):
+def make_plan(session, task, steps, registry=None, approve=True):
     TaskService(session).transition_task(task.id, TaskStatus.PLANNING)
     plan = PlanRecord(
         task_id=task.id,
         version=1,
-        plan_json={"steps": steps},
+        plan_json={"schema_version": 2, "steps": steps, "resolved_steps": []},
         validation_status="VALID",
         created_at=datetime.now(timezone.utc),
     )
     session.add(plan)
     session.flush()
+    tool_registry = registry or build_default_registry(WorkspaceValidator(REPO_ROOT))
+    resolver = CapabilityResolver(build_default_capability_registry(), tool_registry)
+    resolved = [
+        resolver.resolve(
+            task_id=task.id,
+            plan_id=plan.id,
+            plan_version=plan.version,
+            step_id=step["step_id"],
+            request=CapabilityRequest(step["capability_id"], step["parameters"]),
+        ).to_dict()
+        for step in steps
+    ]
+    plan.plan_json = {**plan.plan_json, "resolved_steps": resolved}
     session.commit()
-    ApprovalService(session).create_request(
-        task_id=task.id,
-        plan_id=plan.id,
-        plan_version=plan.version,
-        requested_by="runtime-test",
-    )
-    ApprovalService(session).approve(plan_approval_id(session, plan), actor="reviewer")
+    if approve:
+        ApprovalService(session).create_request(
+            task_id=task.id,
+            plan_id=plan.id,
+            plan_version=plan.version,
+            requested_by="runtime-test",
+        )
+        ApprovalService(session).approve(plan_approval_id(session, plan), actor="reviewer")
     return plan
 
 
@@ -70,17 +87,15 @@ def make_gateway(session, registry=None):
 
 
 def runtime_steps(*tools):
-    actions = {
-        "git_read": ("check git status", "low", "SAFE_READ"),
-        "test_run": ("run smoke tests", "medium", "APPROVED_EXEC"),
+    capabilities = {
+        "git_read": ("repository_state", {}),
+        "test_run": ("test_verification", {"profile": "smoke"}),
     }
     return [
         {
             "step_id": f"step-{index}",
-            "tool": tool,
-            "action": actions[tool][0],
-            "risk_level": actions[tool][1],
-            "permission_level": actions[tool][2],
+            "capability_id": capabilities[tool][0],
+            "parameters": capabilities[tool][1],
         }
         for index, tool in enumerate(tools, start=1)
     ]
@@ -121,7 +136,7 @@ def test_runtime_handles_tool_failure(db_session):
         )
     )
     task = make_task(db_session)
-    plan = make_plan(db_session, task, runtime_steps("git_read"))
+    plan = make_plan(db_session, task, runtime_steps("git_read"), registry=registry)
     runtime = AgentRuntime(db_session, RuntimeExecutor(make_gateway(db_session, registry)))
 
     result = runtime.run(task_id=task.id, plan_id=plan.id, plan_version=1)
@@ -134,15 +149,7 @@ def test_runtime_handles_tool_failure(db_session):
 
 def test_runtime_requires_approval_before_tool_execution(db_session):
     task = make_task(db_session)
-    TaskService(db_session).transition_task(task.id, TaskStatus.PLANNING)
-    plan = PlanRecord(
-        task_id=task.id,
-        version=1,
-        plan_json={"steps": runtime_steps("git_read")},
-        validation_status="VALID",
-    )
-    db_session.add(plan)
-    db_session.commit()
+    plan = make_plan(db_session, task, runtime_steps("git_read"), approve=False)
     runtime = AgentRuntime(db_session, RuntimeExecutor(make_gateway(db_session)))
 
     with pytest.raises(ApprovalError):

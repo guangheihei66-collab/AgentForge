@@ -1,8 +1,9 @@
 """Deterministic observation and completion decisions."""
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
+from ..capabilities.models import ResolvedExecutionSnapshot
 from ..tools.gateway import ToolExecutionResult
 from .state import RuntimeDecision
 
@@ -21,14 +22,15 @@ class RuntimeObserver:
     def observe(
         self,
         *,
-        step: Mapping[str, Any],
+        snapshot: ResolvedExecutionSnapshot,
         result: ToolExecutionResult,
         remaining_steps: int,
     ) -> RuntimeObservation:
         tool_summary = (result.summary or "No tool result summary")[:2_000]
         metadata = {
-            "step_id": str(step["step_id"]),
-            "tool_name": str(step["tool"]),
+            "step_id": snapshot.step_id,
+            "capability_id": snapshot.capability_id,
+            "tool_name": snapshot.resolved_tool_id,
             "execution_id": result.execution_id,
             "status": result.status,
             "artifact_path": result.artifact_path,
@@ -50,7 +52,7 @@ class RuntimeObserver:
             )
         return RuntimeObservation(
             decision=RuntimeDecision.CONTINUE,
-            decision_summary=f"Step {step['step_id']} succeeded; continue with the next approved step.",
+                decision_summary=f"Step {snapshot.step_id} succeeded; continue with the next approved step.",
             tool_result_summary=tool_summary,
             execution_metadata=metadata,
         )

@@ -1,5 +1,6 @@
 from dataclasses import replace
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +17,9 @@ from app.agents.planner.planner import PlannerAgent
 from app.agents.planner.schemas import parse_plan_for_display
 from app.agents.planner.validator import PlanValidationError, PlanValidator
 from app.agents.providers.mock import MockLLMProvider
+from app.agent_runtime.executor import RuntimeExecutor
+from app.agent_runtime.runtime import AgentRuntime
+from app.agent_runtime.state import RuntimeDecision, RuntimeState
 from app.approvals.service import ApprovalError, ApprovalService
 from app.main import app
 from app.contracts.permissions import PermissionLevel
@@ -23,14 +27,22 @@ from app.domain.states.task_state import TaskStatus
 from app.services.task_service import TaskService
 from app.storage.database import Base
 from app.storage.migrations import migrate_sqlite_schema
-from app.storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, TaskRecord
+from app.storage.orm import (
+    ApprovalRecord,
+    AuditEventRecord,
+    PlanRecord,
+    TaskRecord,
+    ToolExecutionRecord,
+)
 from app.tools.defaults import build_default_registry
+from app.tools.gateway import ToolGateway
 from app.tools.models import ToolDefinition
 from app.tools.registry import ToolRegistry
 from app.workspace.validator import WorkspaceValidator
 
 
 REPO_ROOT = r"D:\AgentProjects\AgentForge"
+DATA_ROOT = Path(r"D:\AgentProjectData\AgentForge")
 
 
 def capability_resolver() -> CapabilityResolver:
@@ -429,3 +441,176 @@ def test_pending_approval_api_exposes_what_will_actually_execute():
     assert snapshot["resolved_tool_id"] == "git_read"
     assert snapshot["normalized_parameters"] == {}
     assert len(snapshot["registry_fingerprint"]) == 64
+
+
+def runtime_for(session, resolver=None):
+    workspace_validator = WorkspaceValidator(REPO_ROOT)
+    gateway = ToolGateway(
+        session=session,
+        registry=(resolver.tools if resolver else build_default_registry(workspace_validator)),
+        workspace_validator=workspace_validator,
+        artifact_root=DATA_ROOT / "test-runs" / "phase-11-2-artifacts",
+    )
+    active_resolver = resolver or CapabilityResolver(
+        build_default_capability_registry(), gateway.registry
+    )
+    return AgentRuntime(session, RuntimeExecutor(gateway), active_resolver)
+
+
+def approve_resolved_plan(session):
+    task, plan, snapshot = make_resolved_plan(session)
+    service = ApprovalService(session)
+    approval = service.create_request(
+        task_id=task.id,
+        plan_id=plan.id,
+        plan_version=plan.version,
+        requested_by="runtime-test",
+    )
+    service.approve(approval.id, actor="reviewer")
+    return task, plan, snapshot
+
+
+def test_runtime_executes_only_the_approved_resolved_snapshot_through_gateway(
+    db_session,
+):
+    task, plan, snapshot = approve_resolved_plan(db_session)
+
+    result = runtime_for(db_session).run(
+        task_id=task.id, plan_id=plan.id, plan_version=plan.version
+    )
+
+    assert result.state == RuntimeState.COMPLETED
+    assert result.decision == RuntimeDecision.COMPLETE
+    execution = db_session.query(ToolExecutionRecord).filter_by(task_id=task.id).one()
+    assert execution.tool_name == snapshot.resolved_tool_id == "git_read"
+    assert execution.action == snapshot.resolved_action == "status"
+    event_types = {
+        event.event_type
+        for event in db_session.query(AuditEventRecord).filter_by(task_id=task.id).all()
+    }
+    assert "RUNTIME_EXECUTION" in event_types
+    assert "TOOL_EXECUTION" in event_types
+    assert "RUNTIME_OBSERVATION" in event_types
+
+
+def test_runtime_rejects_unresolved_input_before_tool_execution(db_session):
+    task, plan, _ = approve_resolved_plan(db_session)
+    plan.plan_json = {
+        "schema_version": 2,
+        "steps": [
+            {
+                "step_id": "step-1",
+                "capability_id": "repository_state",
+                "parameters": {},
+            }
+        ],
+        "resolved_steps": [],
+    }
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="resolved"):
+        runtime_for(db_session).run(
+            task_id=task.id, plan_id=plan.id, plan_version=plan.version
+        )
+
+    assert db_session.query(ToolExecutionRecord).filter_by(task_id=task.id).count() == 0
+
+
+def test_runtime_rejects_registry_drift_before_tool_execution(db_session):
+    task, plan, _ = approve_resolved_plan(db_session)
+    workspace_validator = WorkspaceValidator(REPO_ROOT)
+    changed_tools = ToolRegistry()
+    changed_tools.register(
+        replace(
+            build_default_registry(workspace_validator).require("git_read"),
+            execution_contract_version="2",
+        )
+    )
+    changed_resolver = CapabilityResolver(
+        build_default_capability_registry(), changed_tools
+    )
+
+    with pytest.raises(CapabilityResolutionError, match="fingerprint"):
+        runtime_for(db_session, changed_resolver).run(
+            task_id=task.id, plan_id=plan.id, plan_version=plan.version
+        )
+
+    assert db_session.query(ToolExecutionRecord).filter_by(task_id=task.id).count() == 0
+
+
+def test_multi_step_capability_flow_is_auditable_end_to_end(db_session):
+    class MultiStepProvider:
+        def generate_plan(self, prompt, context):
+            del prompt, context
+            return {
+                "schema_version": 2,
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "capability_id": "repository_state",
+                        "parameters": {},
+                    },
+                    {
+                        "step_id": "step-2",
+                        "capability_id": "project_metadata",
+                        "parameters": {"relative_path": "PROJECT_CONTEXT.md"},
+                    },
+                    {
+                        "step_id": "step-3",
+                        "capability_id": "test_verification",
+                        "parameters": {"profile": "smoke"},
+                    },
+                ],
+            }
+
+    task = TaskService(db_session).create_task(
+        title="Phase 11.2 integration",
+        goal="Verify release capabilities",
+        workspace=REPO_ROOT,
+    )
+    plan = PlannerAgent(db_session, MultiStepProvider(), REPO_ROOT).create_plan(task.id)
+    service = ApprovalService(db_session)
+    approval = service.create_request(
+        task_id=task.id,
+        plan_id=plan.id,
+        plan_version=plan.version,
+        requested_by="integration-test",
+    )
+    service.approve(approval.id, actor="reviewer")
+
+    result = runtime_for(db_session).run(
+        task_id=task.id, plan_id=plan.id, plan_version=plan.version
+    )
+
+    assert result.state == RuntimeState.COMPLETED
+    executions = (
+        db_session.query(ToolExecutionRecord)
+        .filter_by(task_id=task.id)
+        .order_by(ToolExecutionRecord.started_at.asc())
+        .all()
+    )
+    assert [execution.tool_name for execution in executions] == [
+        "git_read",
+        "file_read",
+        "test_run",
+    ]
+    events = db_session.query(AuditEventRecord).filter_by(task_id=task.id).all()
+    event_types = {event.event_type for event in events}
+    assert {
+        "CAPABILITY_REQUESTED",
+        "CAPABILITY_RESOLVED",
+        "EXECUTION_SNAPSHOT_APPROVED",
+        "RUNTIME_EXECUTION",
+        "TOOL_EXECUTION",
+        "RUNTIME_OBSERVATION",
+        "RUNTIME_DECISION",
+    } <= event_types
+    resolved_payload = json.loads(
+        next(event for event in events if event.event_type == "CAPABILITY_RESOLVED").payload_summary
+    )
+    runtime_payload = json.loads(
+        next(event for event in events if event.event_type == "RUNTIME_EXECUTION").payload_summary
+    )
+    assert runtime_payload["capability_id"] == resolved_payload["capability_id"]
+    assert runtime_payload["resolved_tool_id"] == resolved_payload["resolved_tool_id"]
+    assert runtime_payload["registry_fingerprint"] == resolved_payload["registry_fingerprint"]

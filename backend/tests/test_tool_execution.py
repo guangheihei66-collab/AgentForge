@@ -6,6 +6,9 @@ import pytest
 
 from app.domain.states.task_state import TaskStatus
 from app.approvals.service import ApprovalService
+from app.capabilities.models import CapabilityRequest
+from app.capabilities.registry import build_default_capability_registry
+from app.capabilities.resolver import CapabilityResolver
 from app.permissions.levels import PermissionLevel
 from app.services.task_service import TaskService
 from app.storage.orm import AuditEventRecord, EvidenceRecord, PlanRecord, ToolExecutionRecord
@@ -43,12 +46,31 @@ def approve_plan(session, task):
     plan = PlanRecord(
         task_id=task.id,
         version=1,
-        plan_json={"steps": []},
+        plan_json={
+            "schema_version": 2,
+            "steps": [{
+                "step_id": "step-1",
+                "capability_id": "test_verification",
+                "parameters": {"profile": "smoke"},
+            }],
+            "resolved_steps": [],
+        },
         validation_status="VALID",
         created_at=datetime.now(timezone.utc),
     )
     session.add(plan)
     session.flush()
+    validator = WorkspaceValidator(REPO_ROOT)
+    snapshot = CapabilityResolver(
+        build_default_capability_registry(), build_default_registry(validator)
+    ).resolve(
+        task_id=task.id,
+        plan_id=plan.id,
+        plan_version=plan.version,
+        step_id="step-1",
+        request=CapabilityRequest("test_verification", {"profile": "smoke"}),
+    )
+    plan.plan_json = {**plan.plan_json, "resolved_steps": [snapshot.to_dict()]}
     session.commit()
     approval = ApprovalService(session).create_request(
         task_id=task.id,

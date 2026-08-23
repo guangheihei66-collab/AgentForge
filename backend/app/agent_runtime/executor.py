@@ -1,36 +1,12 @@
-"""Adapter between validated plan steps and the existing Tool Gateway."""
+"""Thin adapter from resolved execution snapshots to the Tool Gateway."""
 
-from typing import Any, Mapping
-
+from ..capabilities.models import ResolvedExecutionSnapshot
 from ..contracts.permissions import PermissionLevel
 from ..tools.gateway import ToolExecutionRequest, ToolExecutionResult, ToolGateway
 
 
 class RuntimeExecutor:
-    """Translate human-readable plan actions into fixed Tool Gateway actions."""
-
-    ACTIONS: dict[str, dict[str, tuple[str, dict[str, Any]]]] = {
-        "git_read": {
-            "status": ("status", {}),
-            "check git status": ("status", {}),
-            "log_summary": ("log_summary", {}),
-            "check git log": ("log_summary", {}),
-            "diff_summary": ("diff_summary", {}),
-            "check git diff": ("diff_summary", {}),
-        },
-        "file_read": {
-            "read_metadata": ("read_metadata", {"relative_path": "PROJECT_CONTEXT.md"}),
-            "read project metadata": (
-                "read_metadata",
-                {"relative_path": "PROJECT_CONTEXT.md"},
-            ),
-        },
-        "test_run": {
-            "run_profile": ("run_profile", {"profile": "smoke"}),
-            "run smoke tests": ("run_profile", {"profile": "smoke"}),
-            "run unit tests": ("run_profile", {"profile": "unit"}),
-        },
-    }
+    """Pass already-resolved execution data through the existing gateway."""
 
     def __init__(self, gateway: ToolGateway):
         self.gateway = gateway
@@ -42,26 +18,17 @@ class RuntimeExecutor:
         plan_id: str,
         plan_version: int,
         workspace: str,
-        step: Mapping[str, Any],
+        snapshot: ResolvedExecutionSnapshot,
+        granted_permission: PermissionLevel,
     ) -> ToolExecutionResult:
-        tool_name = str(step["tool"])
-        requested_action = str(step["action"])
-        try:
-            action, parameters = self.ACTIONS[tool_name][requested_action]
-        except KeyError as exc:
-            raise ValueError(
-                f"Runtime cannot map plan action: {tool_name}/{requested_action}"
-            ) from exc
-
-        permission = PermissionLevel(str(step["permission_level"]).upper())
         return self.gateway.execute(
             ToolExecutionRequest(
                 task_id=task_id,
-                tool_name=tool_name,
-                action=action,
+                tool_name=snapshot.resolved_tool_id,
+                action=snapshot.resolved_action,
                 workspace=workspace,
-                parameters=parameters,
-                granted_permission=permission,
+                parameters=snapshot.parameters_dict(),
+                granted_permission=granted_permission,
                 approved=True,
                 plan_id=plan_id,
                 plan_version=plan_version,
