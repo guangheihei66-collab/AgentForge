@@ -10,6 +10,7 @@ class TaskSummaryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None
     title: str
     goal: str
     workspace: str

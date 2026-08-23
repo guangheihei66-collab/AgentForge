@@ -18,6 +18,7 @@ from ...services.plan_repository import PlanRepository
 from ...storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, TaskRecord
 from ...tools.defaults import build_default_registry
 from ...workspace.validator import WorkspaceValidator
+from ...projects.service import ProjectService
 from ..planner.validator import PlanValidationError, PlanValidator
 from ..providers.base import LLMProvider, LLMRequest, ProviderError
 from .models import (
@@ -40,17 +41,12 @@ MAX_AUDIT_BYTES = 8 * 1024
 
 class ReplanningService:
     def __init__(
-        self, session: Session, provider: LLMProvider, workspace_root: str
+        self, session: Session, provider: LLMProvider
     ) -> None:
         self.session = session
         self.provider = provider
-        self.workspace_validator = WorkspaceValidator(workspace_root)
-        self.validator = PlanValidator(self.workspace_validator)
         self.capability_registry = build_default_capability_registry()
-        self.resolver = CapabilityResolver(
-            self.capability_registry,
-            build_default_registry(self.workspace_validator),
-        )
+        self.projects = ProjectService(session, self.capability_registry)
         self.plans = PlanRepository(session)
 
     def create_successor(
@@ -76,6 +72,20 @@ class ReplanningService:
             raise ValueError("Replan request uses a stale plan version")
         if task.status != TaskStatus.RUNNING.value:
             raise ValueError("Replan task is not running")
+        project_context = self.projects.execution_context_for_task(task_id)
+        self.projects.assert_authority(
+            task.project_id, current.plan_json.get("project_authority")
+        )
+        effective_registry = self.capability_registry.subset(
+            project_context.allowed_capability_ids
+        )
+        self.workspace_validator = WorkspaceValidator.for_project(
+            project_context.workspace_root
+        )
+        self.validator = PlanValidator(self.workspace_validator)
+        self.resolver = CapabilityResolver(
+            effective_registry, build_default_registry(self.workspace_validator)
+        )
 
         current_requests = self._requests(current)
         current_fingerprint = canonical_plan_fingerprint(
@@ -152,7 +162,7 @@ class ReplanningService:
             "reason_code": observation.reason_code.value,
         })
         self.session.commit()
-        prompt = build_replan_prompt(context, self.capability_registry)
+        prompt = build_replan_prompt(context, effective_registry)
         try:
             response = self.provider.generate_replan(
                 LLMRequest(
@@ -177,6 +187,10 @@ class ReplanningService:
                 "Task was cancelled during replanning",
                 transition_failed=False,
             )
+        project_context = self.projects.execution_context_for_task(task_id)
+        self.projects.assert_authority(
+            refreshed_task.project_id, current.plan_json.get("project_authority")
+        )
         try:
             proposal = ReplanProposal.model_validate(dict(response.payload))
             if len(proposal.revised_remaining_steps) > policy.remaining_steps:
@@ -190,7 +204,7 @@ class ReplanningService:
                         for step in proposal.revised_remaining_steps
                     ],
                 },
-                task.workspace,
+                project_context.workspace_root,
             )
             proposed_requests = [
                 CapabilityRequest(step.capability_id, step.parameters)
@@ -267,6 +281,7 @@ class ReplanningService:
                 **validated.model_dump(mode="json"),
                 "resolved_steps": resolved,
                 "replan_lineage": lineage,
+                "project_authority": project_context.authority_snapshot().to_dict(),
             }
             self._audit(task_id, "REPLAN_PROPOSED", {
                 "provider": response.provider,
@@ -309,6 +324,17 @@ class ReplanningService:
         plan = self.plans.highest_for_task(task_id)
         if task is None or plan is None or plan.validation_status != "VALID":
             raise ValueError("No authoritative valid plan exists")
+        project_context = self.projects.execution_context_for_task(task_id)
+        self.projects.assert_authority(
+            task.project_id, plan.plan_json.get("project_authority")
+        )
+        effective_registry = self.capability_registry.subset(
+            project_context.allowed_capability_ids
+        )
+        validator = WorkspaceValidator.for_project(project_context.workspace_root)
+        self.resolver = CapabilityResolver(
+            effective_registry, build_default_registry(validator)
+        )
         incomplete_requests = (
             self.session.query(AuditEventRecord)
             .filter_by(task_id=task_id, event_type="REPLAN_REQUESTED")

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { ApprovalQueueItem, CapabilityPlanStep, Plan, ProviderStatus, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
+import type { ApprovalQueueItem, CapabilityPlanStep, Plan, ProjectDetail, ProjectSummary, ProviderStatus, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
 
-const demoTask: TaskSummary = { id: 'demo-release-v2', title: 'Release v2.0 Verification', goal: 'Verify whether Release v2.0 is ready for release.', workspace: 'D:/AgentProjects/AgentForge', status: 'WAITING_APPROVAL', created_at: '2026-08-21T14:18:07Z', updated_at: '2026-08-21T14:32:01Z' }
+const demoProject: ProjectDetail = { id: 'demo-project', name: 'AgentForge', description: 'Local Agent operations workspace.', workspace_root: 'D:/AgentProjects/AgentForge', environment: 'development', status: 'ACTIVE', allowed_capability_ids: ['repository_state', 'project_metadata', 'test_verification'], config_version: 1, created_at: '2026-08-21T14:00:00Z', updated_at: '2026-08-21T14:00:00Z', recent_tasks: [] }
+const demoTask: TaskSummary = { id: 'demo-release-v2', project_id: demoProject.id, title: 'Release v2.0 Verification', goal: 'Verify whether Release v2.0 is ready for release.', workspace: 'D:/AgentProjects/AgentForge', status: 'WAITING_APPROVAL', created_at: '2026-08-21T14:18:07Z', updated_at: '2026-08-21T14:32:01Z' }
+demoProject.recent_tasks = [demoTask]
 const demoSteps: CapabilityPlanStep[] = [
   { step_id: 'step-1', capability_id: 'repository_state' as const, parameters: {} },
   { step_id: 'step-2', capability_id: 'project_metadata' as const, parameters: { relative_path: 'PROJECT_CONTEXT.md' } },
@@ -30,14 +32,17 @@ const demoResolved = [
   resolved('step-2', 'project_metadata', 'file_read', 'read_metadata', { relative_path: 'PROJECT_CONTEXT.md' }),
   resolved('step-3', 'test_verification', 'test_run', 'run_profile', { profile: 'smoke' }),
 ]
-const demoPlan: Plan = { id: 'plan-demo', version: 1, validation_status: 'VALID', created_at: '2026-08-21T14:22:41Z', plan_json: { schema_version: 2, steps: demoSteps, resolved_steps: demoResolved } }
-const demoSnapshot = { schema_version: 1 as const, steps: demoResolved }
+const demoAuthority = { project_id: demoProject.id, config_version: 1, authority_fingerprint: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789', canonical_workspace_root: 'd:\\agentprojects\\agentforge' }
+const demoPlan: Plan = { id: 'plan-demo', version: 1, validation_status: 'VALID', created_at: '2026-08-21T14:22:41Z', plan_json: { schema_version: 2, steps: demoSteps, resolved_steps: demoResolved, project_authority: demoAuthority } }
+const demoSnapshot = { schema_version: 2 as const, project_authority: demoAuthority, steps: demoResolved }
 const demoApproval: ApprovalQueueItem = { id: 'approval-demo', task_id: demoTask.id, task_title: demoTask.title, plan_id: demoPlan.id, plan_version: 1, decision: 'PENDING', requested_by: 'planner-agent', created_at: '2026-08-21T14:32:01Z', plan_json: demoPlan.plan_json, resolved_snapshot: demoSnapshot }
 const demoDetail: TaskDetail = { task: demoTask, plans: [demoPlan], approvals: [{ id: demoApproval.id, plan_id: demoPlan.id, decision: 'PENDING', approver: 'pending', resolved_snapshot: demoSnapshot, created_at: demoApproval.created_at }], executions: [], evidence: [], audit: [{ id: 'audit-1', event_type: 'TASK_CREATED', actor: 'operator', payload_summary: 'Task created', correlation_id: 'corr-1', created_at: demoTask.created_at }, { id: 'audit-2', event_type: 'PLAN_CREATED', actor: 'planner', payload_summary: 'Validated plan version 1', correlation_id: 'corr-2', created_at: '2026-08-21T14:22:41Z' }] }
 const demoProvider: ProviderStatus = { provider: 'mock', model: 'deterministic-mock', configured: true, credential_configured: false, connection_status: 'not tested' }
 
 export function useOperations() {
   const [tasks, setTasks] = useState<TaskSummary[]>([demoTask])
+  const [projects, setProjects] = useState<ProjectSummary[]>([demoProject])
+  const [project, setProject] = useState<ProjectDetail>(demoProject)
   const [approvals, setApprovals] = useState<ApprovalQueueItem[]>([demoApproval])
   const [selectedId, setSelectedId] = useState<string | undefined>()
   const [detail, setDetail] = useState<TaskDetail>(demoDetail)
@@ -48,8 +53,8 @@ export function useOperations() {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextTasks, nextApprovals] = await Promise.all([api.listTasks(), api.getPendingApprovals()])
-      setTasks(nextTasks); setApprovals(nextApprovals)
+      const [nextTasks, nextApprovals, nextProjects] = await Promise.all([api.listTasks(), api.getPendingApprovals(), api.listProjects()])
+      setTasks(nextTasks); setApprovals(nextApprovals); setProjects(nextProjects)
       const id = selectedId && nextTasks.some(task => task.id === selectedId) ? selectedId : nextTasks[0]?.id
       if (id) {
         setSelectedId(id)
@@ -73,6 +78,32 @@ export function useOperations() {
     try { setDetail(await api.getTaskDetail(id)); setReport(await api.getReport(id)); setLive(true) } catch { if (id === demoTask.id) { setDetail(demoDetail); setReport({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, evidence: [], audit_count: 2, execution_count: 0 }) } }
   }
 
+  async function chooseProject(id: string) {
+    try { setProject(await api.getProject(id)); setLive(true) }
+    catch { if (id === demoProject.id) setProject(demoProject) }
+  }
+
+  async function createProject(payload: { name: string; description?: string; workspace_root: string; environment: string; allowed_capability_ids: string[] }) {
+    await api.createProject(payload)
+    await refresh()
+  }
+
+  async function validateWorkspace(workspace: string) {
+    return (await api.validateWorkspace(workspace)).canonical_workspace_root
+  }
+
+  async function createTask(projectId: string, title: string, goal: string) {
+    await api.createTask({ project_id: projectId, title, goal })
+    await chooseProject(projectId)
+    await refresh()
+  }
+
+  async function archiveProject(projectId: string, version: number) {
+    await api.archiveProject(projectId, version)
+    await chooseProject(projectId)
+    await refresh()
+  }
+
   async function act(action: 'approve' | 'reject' | 'cancel', approvalId?: string) {
     if (action === 'approve' && approvalId) await api.approve(approvalId)
     if (action === 'reject' && approvalId) await api.reject(approvalId, 'Plan requires operator changes')
@@ -80,5 +111,5 @@ export function useOperations() {
     await refresh()
   }
 
-  return { tasks, approvals, detail, report, selectedId, chooseTask, act, refresh, live, providerStatus, testingProvider, testProviderConnection }
+  return { tasks, approvals, projects, project, detail, report, selectedId, chooseTask, chooseProject, createProject, validateWorkspace, createTask, archiveProject, act, refresh, live, providerStatus, testingProvider, testProviderConnection }
 }

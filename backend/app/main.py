@@ -12,6 +12,7 @@ from .api.routes.planning import router as planning_router
 from .api.routes.operations import router as operations_router
 from .api.routes.providers import router as providers_router
 from .api.routes.tasks import router as tasks_router
+from .api.routes.projects import router as projects_router
 from .storage.database import init_db
 
 
@@ -34,11 +35,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
 app.include_router(health_router)
 app.include_router(tasks_router)
+app.include_router(projects_router)
 app.include_router(approvals_router)
 app.include_router(planning_router)
 app.include_router(operations_router)

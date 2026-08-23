@@ -20,6 +20,8 @@ from app.tools.gateway import ToolGateway
 from app.tools.models import ToolDefinition
 from app.tools.registry import ToolRegistry
 from app.workspace.validator import WorkspaceValidator
+from tests.project_test_support import (artifact_root, create_project_task,
+                                        project_workspace, with_project_authority)
 
 
 REPO_ROOT = r"D:\AgentProjects\AgentForge"
@@ -27,10 +29,9 @@ DATA_ROOT = r"D:\AgentProjectData\AgentForge"
 
 
 def make_task(session):
-    return TaskService(session).create_task(
+    return create_project_task(session,
         title="Runtime test task",
         goal="Exercise deterministic runtime",
-        workspace=REPO_ROOT,
     )
 
 
@@ -39,13 +40,13 @@ def make_plan(session, task, steps, registry=None, approve=True):
     plan = PlanRecord(
         task_id=task.id,
         version=1,
-        plan_json={"schema_version": 2, "steps": steps, "resolved_steps": []},
+        plan_json=with_project_authority(session, task, {"schema_version": 2, "steps": steps, "resolved_steps": []}),
         validation_status="VALID",
         created_at=datetime.now(timezone.utc),
     )
     session.add(plan)
     session.flush()
-    tool_registry = registry or build_default_registry(WorkspaceValidator(REPO_ROOT))
+    tool_registry = registry or build_default_registry(WorkspaceValidator(project_workspace(session)))
     resolver = CapabilityResolver(build_default_capability_registry(), tool_registry)
     resolved = [
         resolver.resolve(
@@ -77,12 +78,12 @@ def plan_approval_id(session, plan):
 
 
 def make_gateway(session, registry=None):
-    validator = WorkspaceValidator(REPO_ROOT)
+    validator = WorkspaceValidator(project_workspace(session))
     return ToolGateway(
         session=session,
         registry=registry or build_default_registry(validator),
         workspace_validator=validator,
-        artifact_root=Path(DATA_ROOT) / "test-runs" / "runtime-artifacts",
+        artifact_root=Path(artifact_root(session)),
     )
 
 

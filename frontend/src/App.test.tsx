@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import { api } from './api/client'
 
 describe('AgentForge operations console', () => {
   afterEach(() => cleanup())
@@ -58,6 +59,58 @@ describe('AgentForge operations console', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }))
     expect(await screen.findByText('Connection success')).toBeInTheDocument()
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/llm/provider/test'))).toHaveLength(1)
+  })
+
+  it('shows the local Projects surface and explicit capability selection', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Projects' }))
+    expect(await screen.findByRole('heading', { name: 'Projects' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Workspace path')).toBeInTheDocument()
+    expect(screen.getByLabelText('repository_state')).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Create Project' })).toBeInTheDocument()
+  })
+
+  it('sends Project-scoped Task creation without workspace or tool authority', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'task-1' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.createTask({ project_id: 'project-1', title: 'Check', goal: 'Verify release' })
+
+    const [, options] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(options.body))).toEqual({
+      project_id: 'project-1', title: 'Check', goal: 'Verify release',
+    })
+    expect(String(options.body)).not.toContain('workspace')
+    expect(String(options.body)).not.toContain('tool')
+  })
+
+  it('keeps archived Project history readable and disables mutations', async () => {
+    const archived = {
+      id: 'archived-project', name: 'Archived Project', description: null,
+      workspace_root: 'D:/Archive', environment: 'test', status: 'ARCHIVED',
+      allowed_capability_ids: ['repository_state'], config_version: 2,
+      created_at: '2026-08-21T14:00:00Z', updated_at: '2026-08-21T15:00:00Z',
+      recent_tasks: [],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/projects')) return jsonResponse([archived])
+      if (url.endsWith('/projects/archived-project')) return jsonResponse(archived)
+      if (url.endsWith('/tasks') || url.endsWith('/approvals/pending')) return jsonResponse([])
+      if (url.endsWith('/llm/provider')) return jsonResponse({
+        provider: 'mock', configured: true, model: 'deterministic-mock',
+        credential_configured: false, connection_status: 'not tested', failure_category: null,
+      })
+      throw new Error('not needed')
+    }))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Projects' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Archived Project/i }))
+
+    expect(await screen.findByRole('heading', { name: 'Archived Project' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create Task' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Archive Project' })).toBeDisabled()
+    expect(screen.getByText(/History remains readable/i)).toBeInTheDocument()
   })
 })
 

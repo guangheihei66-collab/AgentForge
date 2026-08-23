@@ -16,10 +16,17 @@ class TaskService:
         self.session = session
         self.tasks = TaskRepository(session)
 
-    def create_task(self, *, title: str, goal: str, workspace: str) -> Task:
+    def create_task(self, *, title: str, goal: str, project_id: str | None = None,
+                    workspace: str | None = None) -> Task:
+        if not project_id:
+            raise ValueError("New Task requires a Project")
+        from ..projects.service import ProjectService
+        context = ProjectService(self.session).execution_context(project_id)
+        workspace = context.workspace_root
         now = datetime.now(timezone.utc)
         task = Task(
             id=str(uuid4()),
+            project_id=project_id,
             title=title,
             goal=goal,
             workspace=workspace,

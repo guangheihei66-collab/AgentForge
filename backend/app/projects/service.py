@@ -27,10 +27,7 @@ class ProjectService:
                environment: str, allowed_capability_ids: tuple[str, ...] = ()) -> Project:
         root = str(WorkspaceValidator.canonicalize_project_root(workspace_root))
         policy = self._policy(allowed_capability_ids)
-        key = WorkspaceValidator.authority_path_key(root)
-        for existing in self.projects.list():
-            if existing.status is ProjectStatus.ACTIVE and WorkspaceValidator.authority_path_key(existing.workspace_root) == key:
-                raise ProjectConflictError("An active Project already uses this workspace")
+        self._assert_unique_active_root(root)
         project = self.projects.create(Project.new(
             name=name.strip(), description=description, workspace_root=root,
             environment=environment.strip(), allowed_capability_ids=policy,
@@ -54,6 +51,7 @@ class ProjectService:
         if current.config_version != expected_config_version:
             raise ProjectConflictError("Project config version is stale")
         root = current.workspace_root if workspace_root is None else str(WorkspaceValidator.canonicalize_project_root(workspace_root))
+        self._assert_unique_active_root(root, exclude_project_id=current.id)
         policy = current.allowed_capability_ids if allowed_capability_ids is None else self._policy(allowed_capability_ids)
         security_changed = (WorkspaceValidator.authority_path_key(root) != WorkspaceValidator.authority_path_key(current.workspace_root) or policy != current.allowed_capability_ids)
         updated = replace(current, name=current.name if name is None else name.strip(),
@@ -119,3 +117,17 @@ class ProjectService:
             except LookupError as exc:
                 raise ValueError(f"Unknown Project capability: {value}") from exc
         return tuple(sorted(values))
+
+    def _assert_unique_active_root(
+        self, root: str, *, exclude_project_id: str | None = None
+    ) -> None:
+        key = WorkspaceValidator.authority_path_key(root)
+        for existing in self.projects.list():
+            if (
+                existing.id != exclude_project_id
+                and existing.status is ProjectStatus.ACTIVE
+                and WorkspaceValidator.authority_path_key(existing.workspace_root) == key
+            ):
+                raise ProjectConflictError(
+                    "An active Project already uses this workspace"
+                )

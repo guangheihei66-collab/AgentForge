@@ -2,6 +2,7 @@ export type TaskStatus = 'CREATED' | 'PLANNING' | 'WAITING_APPROVAL' | 'RUNNING'
 
 export type TaskSummary = {
   id: string
+  project_id: string | null
   title: string
   goal: string
   workspace: string
@@ -33,7 +34,31 @@ export type PlanDocument = {
   summary?: string
   steps: CapabilityPlanStep[]
   resolved_steps: ResolvedExecutionSnapshot[]
+  project_authority: ProjectAuthority
 }
+
+export type ProjectAuthority = {
+  project_id: string
+  config_version: number
+  authority_fingerprint: string
+  canonical_workspace_root: string
+}
+
+export type ProjectStatus = 'ACTIVE' | 'ARCHIVED'
+export type ProjectSummary = {
+  id: string
+  name: string
+  description?: string | null
+  workspace_root: string
+  environment: string
+  status: ProjectStatus
+  allowed_capability_ids: string[]
+  config_version: number
+  created_at: string
+  updated_at: string
+}
+export type ProjectTask = Pick<TaskSummary, 'id' | 'title' | 'goal' | 'status' | 'created_at'>
+export type ProjectDetail = ProjectSummary & { recent_tasks: ProjectTask[] }
 
 export type ProviderStatus = {
   provider: string
@@ -45,7 +70,8 @@ export type ProviderStatus = {
 }
 
 export type ApprovalSnapshot = {
-  schema_version: 1
+  schema_version: 2
+  project_authority: ProjectAuthority
   steps: ResolvedExecutionSnapshot[]
 }
 

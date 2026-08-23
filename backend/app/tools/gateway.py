@@ -32,6 +32,7 @@ class ToolExecutionRequest:
     action: str
     workspace: str
     parameters: dict[str, Any]
+    project_authority_fingerprint: str | None = None
     granted_permission: PermissionLevel | None = None
     approved: bool = False
     plan_id: str | None = None
@@ -86,6 +87,13 @@ class ToolGateway:
         self.session.flush()
 
         try:
+            ApprovalService(self.session).assert_project_execution_allowed(
+                task_id=request.task_id,
+                plan_id=request.plan_id,
+                plan_version=request.plan_version,
+                workspace=request.workspace,
+                authority_fingerprint=request.project_authority_fingerprint,
+            )
             definition = self.registry.require(request.tool_name)
             if request.action not in definition.allowed_actions:
                 raise PermissionError(

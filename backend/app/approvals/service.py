@@ -88,6 +88,18 @@ class ApprovalService:
             raise ApprovalError("Cancelled task cannot be approved")
         if approval.decision != "PENDING":
             raise ApprovalError(f"Approval is already decided: {approval.decision}")
+        document = approval.resolved_snapshot
+        if not isinstance(document, dict):
+            raise ApprovalError("Approval has no Project execution authority")
+        from ..projects.service import ProjectService
+        try:
+            ProjectService(self.session).assert_authority(
+                task.project_id, document.get("project_authority")
+            )
+        except (PermissionError, ValueError, TypeError) as exc:
+            raise ApprovalError(
+                "Archived or changed Project cannot approve pending execution"
+            ) from exc
 
         if task.status == TaskStatus.WAITING_APPROVAL.value:
             TaskService(self.session).transition_task(
@@ -215,14 +227,23 @@ class ApprovalService:
         )
         if approval is None or task.status != TaskStatus.RUNNING.value:
             raise ApprovalError("Resolved execution is not approved")
+        document = approval.resolved_snapshot
+        if not isinstance(document, dict) or document.get("schema_version") != 2:
+            raise ApprovalError("Approval has no Project execution authority")
+        from ..projects.service import ProjectService
+        try:
+            ProjectService(self.session).assert_authority(
+                task.project_id, document.get("project_authority")
+            )
+        except (PermissionError, ValueError, TypeError) as exc:
+            raise ApprovalError("Project execution authority has drifted") from exc
         approved = self._parse_approved_snapshots(approval)
         matches = [item for item in approved if item.step_id == snapshot.step_id]
         if len(matches) != 1 or matches[0] != snapshot:
             raise ApprovalError("Resolved execution snapshot does not match approval")
         return approval
 
-    @staticmethod
-    def _snapshot_document(plan: PlanRecord) -> dict:
+    def _snapshot_document(self, plan: PlanRecord) -> dict:
         payload = plan.plan_json
         if payload.get("schema_version") != 2:
             raise ApprovalError("Plan has no resolved Phase 11.2 execution snapshot")
@@ -259,14 +280,23 @@ class ApprovalService:
             ordered.append(snapshot.to_dict())
         if len(parsed) != len(ordered):
             raise ApprovalError("Resolved plan contains unmatched snapshots")
-        return {"schema_version": 1, "steps": ordered}
+        task = self.session.get(TaskRecord, plan.task_id)
+        authority = payload.get("project_authority")
+        if task is None or not isinstance(authority, dict):
+            raise ApprovalError("Plan has no Project execution authority")
+        from ..projects.service import ProjectService
+        try:
+            ProjectService(self.session).assert_authority(task.project_id, authority)
+        except (PermissionError, ValueError, TypeError) as exc:
+            raise ApprovalError("Plan Project authority is invalid") from exc
+        return {"schema_version": 2, "project_authority": authority, "steps": ordered}
 
     @staticmethod
     def _parse_approved_snapshots(
         approval: ApprovalRecord,
     ) -> tuple[ResolvedExecutionSnapshot, ...]:
         document = approval.resolved_snapshot
-        if not isinstance(document, dict) or document.get("schema_version") != 1:
+        if not isinstance(document, dict) or document.get("schema_version") != 2:
             raise ApprovalError("Approval has no resolved execution snapshot")
         steps = document.get("steps")
         if not isinstance(steps, list) or not steps:
@@ -275,6 +305,36 @@ class ApprovalService:
             return tuple(ResolvedExecutionSnapshot.from_dict(item) for item in steps)
         except (TypeError, ValueError) as exc:
             raise ApprovalError("Approval resolved snapshot is invalid") from exc
+
+    def assert_project_execution_allowed(
+        self, *, task_id: str, plan_id: str | None, plan_version: int | None,
+        workspace: str, authority_fingerprint: str | None,
+    ) -> ApprovalRecord:
+        if not plan_id or plan_version is None or not authority_fingerprint:
+            raise ApprovalError("Project execution requires approved authority")
+        task, _ = self._validate_binding(task_id, plan_id, plan_version)
+        approval = (
+            self.session.query(ApprovalRecord)
+            .filter_by(task_id=task_id, plan_id=plan_id, decision="APPROVED")
+            .order_by(ApprovalRecord.created_at.desc()).first()
+        )
+        if approval is None or task.status != TaskStatus.RUNNING.value:
+            raise ApprovalError("Project execution is not approved")
+        document = approval.resolved_snapshot
+        if not isinstance(document, dict) or document.get("schema_version") != 2:
+            raise ApprovalError("Approval has no Project authority")
+        from ..projects.service import ProjectService
+        try:
+            context = ProjectService(self.session).assert_authority(
+                task.project_id, document.get("project_authority")
+            )
+        except (PermissionError, ValueError, TypeError) as exc:
+            raise ApprovalError("Project execution authority has drifted") from exc
+        from ..workspace.validator import WorkspaceValidator
+        if (context.authority_fingerprint != authority_fingerprint or
+                WorkspaceValidator.authority_path_key(workspace) != context.workspace_authority_key):
+            raise ApprovalError("Project workspace authority does not match approval")
+        return approval
 
     def _validate_binding(
         self, task_id: str, plan_id: str, plan_version: int

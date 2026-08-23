@@ -16,6 +16,7 @@ from ..capabilities.resolver import CapabilityResolver
 from ..domain.states.task_state import TaskStatus
 from ..services.task_service import TaskService
 from ..storage.orm import AuditEventRecord, PlanRecord, TaskRecord
+from ..projects.service import ProjectService
 from .executor import RuntimeExecutor
 from .observer import RuntimeObservation, RuntimeObserver
 from .state import RuntimeDecision, RuntimeSnapshot, RuntimeState
@@ -63,6 +64,12 @@ class AgentRuntime:
             raise ValueError("Plan is not bound to this task")
         if plan.version != plan_version or plan.validation_status != "VALID":
             raise ValueError("Runtime requires the current valid plan version")
+
+        projects = ProjectService(self.session)
+        project_context = projects.execution_context_for_task(task_id)
+        projects.assert_authority(
+            task.project_id, plan.plan_json.get("project_authority")
+        )
 
         payload = plan.plan_json
         if payload.get("schema_version") != 2:
@@ -114,6 +121,8 @@ class AgentRuntime:
                 or resolved_step.parameters_dict() != step.get("parameters", {})
             ):
                 raise ValueError("Runtime resolved snapshot drifted from the plan")
+            if resolved_step.capability_id not in project_context.allowed_capability_ids:
+                raise PermissionError("Capability is not allowed by the Project")
             approval_service.assert_snapshot_allowed(resolved_step)
             self.resolver.verify(resolved_step)
             ordered.append((step, resolved_step))
@@ -135,6 +144,10 @@ class AgentRuntime:
             )
 
         for index, (step, resolved_step) in enumerate(ordered):
+            project_context = projects.execution_context_for_task(task_id)
+            projects.assert_authority(
+                task.project_id, plan.plan_json.get("project_authority")
+            )
             runtime_snapshot.current_step_id = resolved_step.step_id
             remaining = len(ordered) - index - 1
             try:
@@ -145,7 +158,8 @@ class AgentRuntime:
                     task_id=task_id,
                     plan_id=plan_id,
                     plan_version=plan_version,
-                    workspace=task.workspace,
+                    workspace=project_context.workspace_root,
+                    project_authority_fingerprint=project_context.authority_fingerprint,
                     snapshot=resolved_step,
                     granted_permission=capability.required_permission,
                 )

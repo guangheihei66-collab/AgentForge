@@ -39,6 +39,9 @@ from app.tools.gateway import ToolGateway
 from app.tools.models import ToolDefinition
 from app.tools.registry import ToolRegistry
 from app.workspace.validator import WorkspaceValidator
+from tests.project_test_support import (artifact_root, create_project_task,
+                                        project_fixture, project_workspace,
+                                        with_project_authority)
 
 
 REPO_ROOT = r"D:\AgentProjects\AgentForge"
@@ -219,13 +222,12 @@ def test_fingerprint_is_stable_for_cosmetic_changes_and_detects_semantic_changes
 
 
 def test_planner_persists_capability_first_plan_and_resolved_snapshot(db_session):
-    task = TaskService(db_session).create_task(
+    task = create_project_task(db_session,
         title="Phase 11.2 planner",
         goal="Check repository state",
-        workspace=REPO_ROOT,
     )
 
-    plan = PlannerAgent(db_session, MockLLMProvider(), REPO_ROOT).create_plan(task.id)
+    plan = PlannerAgent(db_session, MockLLMProvider()).create_plan(task.id)
 
     assert plan.plan_json["schema_version"] == 2
     assert plan.plan_json["steps"] == [
@@ -326,16 +328,15 @@ def test_fresh_schema_contains_resolved_snapshot_column():
 
 
 def make_resolved_plan(session):
-    task = TaskService(session).create_task(
+    task = create_project_task(session,
         title="Phase 11.2 approval",
         goal="Approve resolved repository state",
-        workspace=REPO_ROOT,
     )
     TaskService(session).transition_task(task.id, TaskStatus.PLANNING)
     plan = PlanRecord(
         task_id=task.id,
         version=1,
-        plan_json={
+        plan_json=with_project_authority(session, task, {
             "schema_version": 2,
             "steps": [
                 {
@@ -345,12 +346,15 @@ def make_resolved_plan(session):
                 }
             ],
             "resolved_steps": [],
-        },
+        }),
         validation_status="VALID",
     )
     session.add(plan)
     session.flush()
-    snapshot = capability_resolver().resolve(
+    snapshot = CapabilityResolver(
+        build_default_capability_registry(),
+        build_default_registry(WorkspaceValidator(project_workspace(session))),
+    ).resolve(
         task_id=task.id,
         plan_id=plan.id,
         plan_version=1,
@@ -373,7 +377,8 @@ def test_approval_persists_and_authorizes_only_the_exact_resolved_snapshot(db_se
         requested_by="phase-11-2-test",
     )
     assert approval.resolved_snapshot == {
-        "schema_version": 1,
+        "schema_version": 2,
+        "project_authority": plan.plan_json["project_authority"],
         "steps": [snapshot.to_dict()],
     }
     service.approve(approval.id, actor="reviewer")
@@ -392,11 +397,16 @@ def test_approval_persists_and_authorizes_only_the_exact_resolved_snapshot(db_se
 
 
 def test_legacy_plan_cannot_request_phase_11_2_approval(db_session):
-    task = TaskService(db_session).create_task(
-        title="Legacy approval",
-        goal="Reject concrete tool authority",
-        workspace=REPO_ROOT,
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    record = TaskRecord(
+        id=str(uuid4()), project_id=None, title="Legacy approval",
+        goal="Reject concrete tool authority", workspace=REPO_ROOT,
+        status=TaskStatus.CREATED.value, created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
+    db_session.add(record); db_session.commit()
+    task = TaskService(db_session).get_task(record.id)
     TaskService(db_session).transition_task(task.id, TaskStatus.PLANNING)
     plan = PlanRecord(
         task_id=task.id,
@@ -417,14 +427,15 @@ def test_legacy_plan_cannot_request_phase_11_2_approval(db_session):
     assert db_session.query(ApprovalRecord).filter_by(plan_id=plan.id).count() == 0
 
 
-def test_pending_approval_api_exposes_what_will_actually_execute():
+def test_pending_approval_api_exposes_what_will_actually_execute(db_session):
     with TestClient(app) as client:
+        project_id = project_fixture(db_session).id
         task = client.post(
             "/tasks",
             json={
                 "title": "Visible resolved approval",
                 "goal": "Show resolved execution",
-                "workspace": REPO_ROOT,
+                "project_id": project_id,
             },
         ).json()
         plan = client.post(f"/tasks/{task['id']}/plan", json={}).json()
@@ -444,12 +455,12 @@ def test_pending_approval_api_exposes_what_will_actually_execute():
 
 
 def runtime_for(session, resolver=None):
-    workspace_validator = WorkspaceValidator(REPO_ROOT)
+    workspace_validator = WorkspaceValidator(project_workspace(session))
     gateway = ToolGateway(
         session=session,
         registry=(resolver.tools if resolver else build_default_registry(workspace_validator)),
         workspace_validator=workspace_validator,
-        artifact_root=DATA_ROOT / "test-runs" / "phase-11-2-artifacts",
+        artifact_root=Path(artifact_root(session)),
     )
     active_resolver = resolver or CapabilityResolver(
         build_default_capability_registry(), gateway.registry
@@ -496,6 +507,7 @@ def test_runtime_executes_only_the_approved_resolved_snapshot_through_gateway(
 def test_runtime_rejects_unresolved_input_before_tool_execution(db_session):
     task, plan, _ = approve_resolved_plan(db_session)
     plan.plan_json = {
+        "project_authority": plan.plan_json["project_authority"],
         "schema_version": 2,
         "steps": [
             {
@@ -518,7 +530,7 @@ def test_runtime_rejects_unresolved_input_before_tool_execution(db_session):
 
 def test_runtime_rejects_registry_drift_before_tool_execution(db_session):
     task, plan, _ = approve_resolved_plan(db_session)
-    workspace_validator = WorkspaceValidator(REPO_ROOT)
+    workspace_validator = WorkspaceValidator(project_workspace(db_session))
     changed_tools = ToolRegistry()
     changed_tools.register(
         replace(
@@ -574,12 +586,11 @@ def test_multi_step_capability_flow_is_auditable_end_to_end(db_session):
                 attempt_count=1,
             )
 
-    task = TaskService(db_session).create_task(
+    task = create_project_task(db_session,
         title="Phase 11.2 integration",
         goal="Verify release capabilities",
-        workspace=REPO_ROOT,
     )
-    plan = PlannerAgent(db_session, MultiStepProvider(), REPO_ROOT).create_plan(task.id)
+    plan = PlannerAgent(db_session, MultiStepProvider()).create_plan(task.id)
     service = ApprovalService(db_session)
     approval = service.create_request(
         task_id=task.id,

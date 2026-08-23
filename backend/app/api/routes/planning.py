@@ -1,7 +1,5 @@
 """Planner endpoint; it does not expose tool execution."""
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -46,9 +44,8 @@ def create_plan(
     db: Session = Depends(get_db),
     provider: LLMProvider = Depends(get_llm_provider),
 ) -> PlanRead:
-    workspace_root = os.getenv("AGENTFORGE_WORKSPACE_ROOT", r"D:\AgentProjects\AgentForge")
     try:
-        plan = PlannerAgent(db, provider, workspace_root).create_plan(
+        plan = PlannerAgent(db, provider).create_plan(
             task_id, context=payload.context
         )
         return PlanRead.model_validate(plan, from_attributes=True)

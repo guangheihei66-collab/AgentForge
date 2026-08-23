@@ -12,12 +12,15 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 @router.post("", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
 def create_task(payload: TaskCreate, db: Session = Depends(get_db)) -> TaskRead:
-    task = TaskService(db).create_task(
-        title=payload.title,
-        goal=payload.goal,
-        workspace=payload.workspace,
-    )
-    return TaskRead.model_validate(task)
+    try:
+        task = TaskService(db).create_task(
+            title=payload.title, goal=payload.goal, project_id=payload.project_id,
+        )
+        return TaskRead.model_validate(task)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{task_id}", response_model=TaskRead)

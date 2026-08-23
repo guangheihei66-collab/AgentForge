@@ -38,6 +38,7 @@ class WorkspaceValidator:
         if not resolved.is_dir():
             raise WorkspaceValidationError("Workspace must be a directory")
         cls._reject_system_or_user_path(resolved)
+        cls._reject_remote_drive(resolved)
         return resolved
 
     @classmethod
@@ -46,7 +47,12 @@ class WorkspaceValidator:
 
     @staticmethod
     def authority_path_key(path: str | Path) -> str:
-        return ntpath.normcase(ntpath.normpath(str(Path(path).resolve(strict=True))))
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            raise WorkspaceValidationError("Authority path must be absolute")
+        # Project roots are canonicalized strictly at ingress. Keep their
+        # persisted comparison key stable even if the directory later vanishes.
+        return ntpath.normcase(ntpath.normpath(str(candidate)))
 
     def validate_target(self, workspace: str | Path, target: str | Path) -> Path:
         root = self.validate_workspace(workspace)
@@ -69,6 +75,7 @@ class WorkspaceValidator:
 
         resolved = candidate.resolve()
         self._reject_system_or_user_root(resolved)
+        self._reject_remote_drive(resolved)
         try:
             resolved.relative_to(self.root)
         except ValueError as exc:
@@ -85,15 +92,28 @@ class WorkspaceValidator:
             raise WorkspaceValidationError("File path must be relative")
 
         workspace_path = self.validate_workspace(workspace)
-        candidate = (workspace_path / Path(relative_path)).resolve()
-        try:
-            candidate.relative_to(workspace_path)
-        except ValueError as exc:
-            raise WorkspaceValidationError("File path escapes the workspace") from exc
+        candidate = self.validate_target(workspace_path, workspace_path / relative_path)
 
         if self.is_secret_path(candidate):
             raise WorkspaceValidationError("Secret files are not readable")
         return candidate
+
+    @staticmethod
+    def _windows_drive_type(path: Path) -> int | None:
+        if os.name != "nt" or not path.anchor:
+            return None
+        try:
+            import ctypes
+
+            return int(ctypes.windll.kernel32.GetDriveTypeW(path.anchor))
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _reject_remote_drive(cls, path: Path) -> None:
+        # Win32 DRIVE_REMOTE. The bounded call inspects only this volume root.
+        if cls._windows_drive_type(path) == 4:
+            raise WorkspaceValidationError("Workspace must not use a remote drive")
 
     def is_secret_path(self, path: str | Path) -> bool:
         for component in Path(path).parts:

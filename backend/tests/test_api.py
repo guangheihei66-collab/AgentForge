@@ -1,8 +1,38 @@
 from fastapi.testclient import TestClient
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+import pytest
 
 from app.main import app
 from app.storage.database import SessionLocal
 from app.storage.orm import AuditEventRecord
+
+
+@pytest.fixture()
+def api_project_path():
+    parent = Path(r"D:\VSCodeData\AgentDev\Temp")
+    parent.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix="agentforge-api-project-", dir=parent))
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True,
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    yield root
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def create_api_project(client: TestClient, root: Path) -> str:
+    response = client.post("/projects", json={
+        "name": f"API Project {root.name}",
+        "workspace_root": str(root),
+        "environment": "test",
+        "allowed_capability_ids": [
+            "project_metadata", "repository_state", "test_verification"
+        ],
+    })
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
 
 
 def test_health_endpoint():
@@ -38,14 +68,15 @@ def test_local_frontend_origin_is_allowed():
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
-def test_create_task_endpoint():
+def test_create_task_endpoint(api_project_path):
     with TestClient(app) as client:
+        project_id = create_api_project(client, api_project_path)
         response = client.post(
             "/tasks",
             json={
                 "title": "Release v2.0 verification",
                 "goal": "Check release readiness",
-                "workspace": "fixture-repository",
+                "project_id": project_id,
             },
         )
 
@@ -56,14 +87,15 @@ def test_create_task_endpoint():
     assert body["id"]
 
 
-def test_audit_query_endpoint():
+def test_audit_query_endpoint(api_project_path):
     with TestClient(app) as client:
+        project_id = create_api_project(client, api_project_path)
         response = client.post(
             "/tasks",
             json={
                 "title": "Audit query task",
                 "goal": "Verify audit retrieval",
-                "workspace": "fixture-repository",
+                "project_id": project_id,
             },
         )
         task_id = response.json()["id"]
@@ -84,14 +116,15 @@ def test_audit_query_endpoint():
     assert any(event["event_type"] == "APPROVAL_CREATED" for event in audit.json())
 
 
-def test_create_plan_endpoint():
+def test_create_plan_endpoint(api_project_path):
     with TestClient(app) as client:
+        project_id = create_api_project(client, api_project_path)
         task_response = client.post(
             "/tasks",
             json={
                 "title": "Planner API task",
                 "goal": "Check release readiness",
-                "workspace": r"D:\AgentProjects\AgentForge",
+                "project_id": project_id,
             },
         )
         task_id = task_response.json()["id"]
@@ -103,14 +136,15 @@ def test_create_plan_endpoint():
     assert response.json()["plan_json"]["resolved_steps"][0]["resolved_tool_id"] == "git_read"
 
 
-def test_operations_read_endpoints_expose_console_data():
+def test_operations_read_endpoints_expose_console_data(api_project_path):
     with TestClient(app) as client:
+        project_id = create_api_project(client, api_project_path)
         task_response = client.post(
             "/tasks",
             json={
                 "title": "Operations API task",
                 "goal": "Verify console read models",
-                "workspace": r"D:\AgentProjects\AgentForge",
+                "project_id": project_id,
             },
         )
         task_id = task_response.json()["id"]

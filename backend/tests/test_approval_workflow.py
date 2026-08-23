@@ -16,6 +16,9 @@ from app.storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, TaskRe
 from app.tools.defaults import build_default_registry
 from app.tools.gateway import ToolExecutionRequest, ToolGateway
 from app.workspace.validator import WorkspaceValidator
+from tests.project_test_support import (artifact_root, create_project_task,
+                                        project_context, project_workspace,
+                                        with_project_authority)
 
 
 REPO_ROOT = r"D:\AgentProjects\AgentForge"
@@ -23,10 +26,9 @@ ARTIFACT_ROOT = Path(r"D:\AgentProjectData\AgentForge") / "test-runs" / "phase5-
 
 
 def make_task(session):
-    return TaskService(session).create_task(
+    return create_project_task(session,
         title="Approval test",
         goal="Exercise approval governance",
-        workspace=REPO_ROOT,
     )
 
 
@@ -37,7 +39,7 @@ def make_plan(session, task, version=1):
     plan = PlanRecord(
         task_id=task.id,
         version=version,
-        plan_json={
+        plan_json=with_project_authority(session, task, {
             "schema_version": 2,
             "steps": [{
                 "step_id": "step-1",
@@ -45,13 +47,13 @@ def make_plan(session, task, version=1):
                 "parameters": {"profile": "smoke"},
             }],
             "resolved_steps": [],
-        },
+        }),
         validation_status="VALID",
         created_at=datetime.now(timezone.utc),
     )
     session.add(plan)
     session.flush()
-    validator = WorkspaceValidator(REPO_ROOT)
+    validator = WorkspaceValidator(project_workspace(session))
     snapshot = CapabilityResolver(
         build_default_capability_registry(), build_default_registry(validator)
     ).resolve(
@@ -67,8 +69,8 @@ def make_plan(session, task, version=1):
 
 
 def make_gateway(session):
-    validator = WorkspaceValidator(REPO_ROOT)
-    return ToolGateway(session, build_default_registry(validator), validator, ARTIFACT_ROOT)
+    validator = WorkspaceValidator(project_workspace(session))
+    return ToolGateway(session, build_default_registry(validator), validator, Path(artifact_root(session)))
 
 
 def test_create_approve_and_audit(db_session):
@@ -130,12 +132,13 @@ def test_protected_tool_requires_current_approved_plan(db_session):
         task_id=task.id,
         tool_name="test_run",
         action="run_profile",
-        workspace=REPO_ROOT,
+        workspace=project_workspace(db_session),
         parameters={"profile": "smoke"},
         granted_permission=PermissionLevel.APPROVED_EXEC,
         approved=True,
         plan_id=plan.id,
         plan_version=1,
+        project_authority_fingerprint=project_context(db_session).authority_fingerprint,
     )
     with pytest.raises(ApprovalError):
         make_gateway(db_session).execute(request)

@@ -38,6 +38,7 @@ from app.storage.orm import (
     ToolExecutionRecord,
 )
 from app.workspace.validator import WorkspaceValidator
+from tests.project_test_support import create_project_task, project_fixture
 
 
 SECRET = "PHASE12_TEST_SECRET_DO_NOT_LEAK"
@@ -498,8 +499,8 @@ def test_invalid_provider_plan_never_resolves(payload: dict):
 
 
 def test_invalid_capability_parameters_fail_during_resolution(db_session):
-    task = TaskService(db_session).create_task(
-        title="Invalid capability", goal="Check release", workspace=REPO_ROOT
+    task = create_project_task(db_session,
+        title="Invalid capability", goal="Check release"
     )
     payload = {
         "schema_version": 2,
@@ -514,18 +515,18 @@ def test_invalid_capability_parameters_fail_during_resolution(db_session):
     }
 
     with pytest.raises(CapabilityResolutionError):
-        PlannerAgent(db_session, FakeProvider(payload=payload), REPO_ROOT).create_plan(task.id)
+        PlannerAgent(db_session, FakeProvider(payload=payload)).create_plan(task.id)
 
     assert TaskService(db_session).get_task(task.id).status == TaskStatus.FAILED
     assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 0
 
 
 def test_provider_plan_is_validated_resolved_and_safely_audited(db_session):
-    task = TaskService(db_session).create_task(
-        title="Phase 12", goal="Check release", workspace=REPO_ROOT
+    task = create_project_task(db_session,
+        title="Phase 12", goal="Check release"
     )
 
-    plan = PlannerAgent(db_session, FakeProvider(), REPO_ROOT).create_plan(task.id)
+    plan = PlannerAgent(db_session, FakeProvider()).create_plan(task.id)
 
     refreshed = TaskService(db_session).get_task(task.id)
     assert refreshed.status == TaskStatus.WAITING_APPROVAL
@@ -541,8 +542,8 @@ def test_provider_plan_is_validated_resolved_and_safely_audited(db_session):
 
 
 def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
-    task = TaskService(db_session).create_task(
-        title="Phase 12 failure", goal="Check release", workspace=REPO_ROOT
+    task = create_project_task(db_session,
+        title="Phase 12 failure", goal="Check release"
     )
     provider = FakeProvider(
         error=ProviderError(
@@ -554,7 +555,7 @@ def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
     )
 
     with pytest.raises(ProviderError):
-        PlannerAgent(db_session, provider, REPO_ROOT).create_plan(task.id)
+        PlannerAgent(db_session, provider).create_plan(task.id)
 
     assert TaskService(db_session).get_task(task.id).status == TaskStatus.FAILED
     assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 0
@@ -573,9 +574,10 @@ def test_planning_api_uses_injected_provider_without_silent_fallback(db_session)
     app.dependency_overrides[get_llm_provider] = lambda: failing
     try:
         with TestClient(app) as client:
+            project_id = project_fixture(db_session).id
             task = client.post(
                 "/tasks",
-                json={"title": "API Phase 12", "goal": "Check", "workspace": REPO_ROOT},
+                json={"title": "API Phase 12", "goal": "Check", "project_id": project_id},
             ).json()
             response = client.post(f"/tasks/{task['id']}/plan", json={})
     finally:

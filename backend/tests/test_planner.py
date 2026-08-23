@@ -10,16 +10,16 @@ from app.domain.states.task_state import TaskStatus
 from app.services.task_service import TaskService
 from app.storage.orm import AuditEventRecord, PlanRecord, TaskRecord
 from app.workspace.validator import WorkspaceValidator
+from tests.project_test_support import create_project_task
 
 
 REPO_ROOT = r"D:\AgentProjects\AgentForge"
 
 
 def make_task(session):
-    return TaskService(session).create_task(
+    return create_project_task(session,
         title="Planner test",
         goal="Check release readiness",
-        workspace=REPO_ROOT,
     )
 
 
@@ -53,7 +53,7 @@ def validator():
 
 def test_valid_plan_generated_and_validated(db_session):
     task = make_task(db_session)
-    plan = PlannerAgent(db_session, MockLLMProvider(), REPO_ROOT).create_plan(task.id)
+    plan = PlannerAgent(db_session, MockLLMProvider()).create_plan(task.id)
 
     assert plan.version == 1
     assert plan.validation_status == "VALID"
@@ -105,7 +105,7 @@ def test_planner_integration_saves_plan_and_waits_for_approval(db_session):
     provider = FixedProvider(
         {"schema_version": 2, "steps": [{"step_id": "1", "capability_id": "repository_state", "parameters": {}}]}
     )
-    plan = PlannerAgent(db_session, provider, REPO_ROOT).create_plan(task.id, context={"release": "2.0"})
+    plan = PlannerAgent(db_session, provider).create_plan(task.id, context={"release": "2.0"})
 
     assert db_session.get(PlanRecord, plan.id).version == 1
     assert db_session.get(TaskRecord, task.id).status == TaskStatus.WAITING_APPROVAL.value

@@ -18,6 +18,7 @@ class RuntimeExecutor:
         plan_id: str,
         plan_version: int,
         workspace: str,
+        project_authority_fingerprint: str,
         snapshot: ResolvedExecutionSnapshot,
         granted_permission: PermissionLevel,
     ) -> ToolExecutionResult:
@@ -27,6 +28,7 @@ class RuntimeExecutor:
                 tool_name=snapshot.resolved_tool_id,
                 action=snapshot.resolved_action,
                 workspace=workspace,
+                project_authority_fingerprint=project_authority_fingerprint,
                 parameters=snapshot.parameters_dict(),
                 granted_permission=granted_permission,
                 approved=True,

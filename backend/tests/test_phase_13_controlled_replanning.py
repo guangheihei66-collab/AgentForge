@@ -32,6 +32,8 @@ from app.tools.gateway import ToolExecutionResult
 from app.tools.models import ToolDefinition
 from app.tools.registry import ToolRegistry
 from app.workspace.validator import WorkspaceValidator
+from tests.project_test_support import (create_project_task, project_workspace,
+                                        with_project_authority)
 from app.agents.providers import (
     LLMRequest,
     LLMResponse,
@@ -376,10 +378,9 @@ def test_mock_replanner_is_deterministic_and_capability_only():
 
 
 def create_approved_v1(session):
-    task = TaskService(session).create_task(
+    task = create_project_task(session,
         title="Phase 13 release verification",
         goal="Check whether version 2.0 is ready for release.",
-        workspace=REPO_ROOT,
     )
     TaskService(session).transition_task(task.id, TaskStatus.PLANNING)
     steps = [
@@ -393,7 +394,7 @@ def create_approved_v1(session):
     plan = PlanRecord(
         task_id=task.id,
         version=1,
-        plan_json={"schema_version": 2, "summary": "verify", "steps": steps, "resolved_steps": []},
+        plan_json=with_project_authority(session, task, {"schema_version": 2, "summary": "verify", "steps": steps, "resolved_steps": []}),
         validation_status="VALID",
         created_at=datetime.now(timezone.utc),
     )
@@ -435,7 +436,7 @@ def test_replanning_service_creates_immutable_v2_with_fresh_approval(db_session)
     task, plan_v1, approval_v1 = create_approved_v1(db_session)
     original_v1 = json.loads(json.dumps(plan_v1.plan_json))
     observation = replan_observation()
-    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service = ReplanningService(db_session, MockLLMProvider())
 
     outcome = service.create_successor(
         task_id=task.id,
@@ -472,7 +473,7 @@ def test_replanning_service_creates_immutable_v2_with_fresh_approval(db_session)
 
 def test_replanning_service_rejects_stale_plan_version(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
-    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service = ReplanningService(db_session, MockLLMProvider())
 
     with pytest.raises(ValueError, match="stale"):
         service.create_successor(
@@ -517,7 +518,7 @@ class DeterministicReplanExecutor:
 
 def test_runtime_pauses_v1_on_replan_and_requires_v2_approval(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
-    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service = ReplanningService(db_session, MockLLMProvider())
     executor = DeterministicReplanExecutor()
     runtime = AgentRuntime(
         db_session,
@@ -540,7 +541,7 @@ def test_runtime_pauses_v1_on_replan_and_requires_v2_approval(db_session):
 
 def test_approved_v2_resumes_through_snapshot_and_finishes_not_ready(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
-    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service = ReplanningService(db_session, MockLLMProvider())
     executor = DeterministicReplanExecutor()
     runtime = AgentRuntime(
         db_session,
@@ -567,7 +568,7 @@ def test_approved_v2_resumes_through_snapshot_and_finishes_not_ready(db_session)
 
 def test_release_verification_replan_audit_is_reconstructable_and_bounded(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
-    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service = ReplanningService(db_session, MockLLMProvider())
     executor = DeterministicReplanExecutor()
     runtime = AgentRuntime(
         db_session, executor, resolver=resolver(), replanning_service=service
@@ -622,7 +623,7 @@ def test_release_verification_replan_audit_is_reconstructable_and_bounded(db_ses
 
 def test_authoritative_plan_rejects_tampered_v2_snapshot(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
-    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service = ReplanningService(db_session, MockLLMProvider())
     outcome = service.create_successor(
         task_id=task.id,
         current_plan_id=plan_v1.id,
@@ -658,7 +659,7 @@ def test_authoritative_plan_never_resumes_v1_after_incomplete_replan_request(db_
 
     with pytest.raises(ValueError, match="incomplete"):
         ReplanningService(
-            db_session, MockLLMProvider(), REPO_ROOT
+            db_session, MockLLMProvider()
         ).authoritative_plan(task.id)
 
 
@@ -672,7 +673,7 @@ class FailingReplanProvider(MockLLMProvider):
 
 def test_provider_failure_fails_task_and_records_safe_rejection(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
-    service = ReplanningService(db_session, FailingReplanProvider(), REPO_ROOT)
+    service = ReplanningService(db_session, FailingReplanProvider())
 
     outcome = service.create_successor(
         task_id=task.id,
@@ -705,7 +706,7 @@ def test_provider_authentication_failure_fails_closed(db_session):
 
     task, plan_v1, _ = create_approved_v1(db_session)
     outcome = ReplanningService(
-        db_session, AuthenticationFailureProvider(), REPO_ROOT
+        db_session, AuthenticationFailureProvider()
     ).create_successor(
         task_id=task.id,
         current_plan_id=plan_v1.id,
@@ -742,7 +743,7 @@ class CancellingReplanProvider(MockLLMProvider):
 def test_cancellation_after_provider_response_prevents_v2_persistence(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
     provider = CancellingReplanProvider(db_session, task.id)
-    service = ReplanningService(db_session, provider, REPO_ROOT)
+    service = ReplanningService(db_session, provider)
 
     outcome = service.create_successor(
         task_id=task.id,
@@ -799,7 +800,7 @@ class PayloadReplanProvider(MockLLMProvider):
 def test_invalid_replan_proposal_fails_closed(payload, db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
     service = ReplanningService(
-        db_session, PayloadReplanProvider(payload), REPO_ROOT
+        db_session, PayloadReplanProvider(payload)
     )
 
     outcome = service.create_successor(
@@ -823,7 +824,7 @@ def test_duplicate_replan_proposal_fails_closed(db_session):
         "revised_remaining_steps": plan_v1.plan_json["steps"],
     }
     service = ReplanningService(
-        db_session, PayloadReplanProvider(duplicate), REPO_ROOT
+        db_session, PayloadReplanProvider(duplicate)
     )
 
     outcome = service.create_successor(
@@ -842,10 +843,12 @@ def test_duplicate_replan_proposal_fails_closed(db_session):
 
 def test_zero_resolver_candidate_rolls_back_successor(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
-    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
-    service.resolver = CapabilityResolver(
-        build_default_capability_registry(), ToolRegistry()
+    service = ReplanningService(db_session, MockLLMProvider())
+    capabilities = build_default_capability_registry()
+    capabilities._capabilities["project_metadata"] = replace(
+        capabilities.require("project_metadata"), candidate_tool_ids=("missing",)
     )
+    service.capability_registry = capabilities
 
     outcome = service.create_successor(
         task_id=task.id,
@@ -886,7 +889,7 @@ def test_multiple_resolver_candidates_fail_closed(db_session):
         )
 
     task, plan_v1, _ = create_approved_v1(db_session)
-    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service = ReplanningService(db_session, MockLLMProvider())
     service.capability_registry = capabilities
     service.resolver = CapabilityResolver(capabilities, tools)
     outcome = service.create_successor(
@@ -906,7 +909,7 @@ def test_multiple_resolver_candidates_fail_closed(db_session):
 def test_service_policy_budget_denial_fails_closed(db_session):
     task, plan_v1, _ = create_approved_v1(db_session)
     outcome = ReplanningService(
-        db_session, MockLLMProvider(), REPO_ROOT
+        db_session, MockLLMProvider()
     ).create_successor(
         task_id=task.id,
         current_plan_id=plan_v1.id,

@@ -8,15 +8,17 @@ from ..domain.states.task_state import TaskStatus
 
 
 class TaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str = Field(min_length=36, max_length=36)
     title: str = Field(min_length=1, max_length=200)
     goal: str = Field(min_length=1, max_length=5000)
-    workspace: str = Field(min_length=1, max_length=500)
 
 
 class TaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    project_id: str | None
     title: str
     goal: str
     workspace: str

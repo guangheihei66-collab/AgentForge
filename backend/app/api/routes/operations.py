@@ -15,6 +15,7 @@ from ...storage.orm import (
     AuditEventRecord,
     EvidenceRecord,
     PlanRecord,
+    ProjectRecord,
     TaskRecord,
     ToolExecutionRecord,
 )
@@ -41,7 +42,9 @@ def pending_approvals(db: Session = Depends(get_db)) -> list[ApprovalQueueRead]:
         db.query(ApprovalRecord, TaskRecord, PlanRecord)
         .join(TaskRecord, TaskRecord.id == ApprovalRecord.task_id)
         .join(PlanRecord, PlanRecord.id == ApprovalRecord.plan_id)
+        .join(ProjectRecord, ProjectRecord.id == TaskRecord.project_id)
         .filter(ApprovalRecord.decision == "PENDING")
+        .filter(ProjectRecord.status == "ACTIVE")
         .order_by(ApprovalRecord.created_at.asc())
         .all()
     )
