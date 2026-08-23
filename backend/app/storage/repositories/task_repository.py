@@ -49,10 +49,10 @@ class TaskRepository:
         record = self.session.get(TaskRecord, task.id)
         if record is None:
             raise LookupError(f"Task not found: {task.id}")
+        if record.project_id != task.project_id or record.workspace != task.workspace:
+            raise ValueError("Task Project binding is immutable")
         record.title = task.title
-        record.project_id = task.project_id
         record.goal = task.goal
-        record.workspace = task.workspace
         record.status = task.status.value
         record.updated_at = task.updated_at
         record.completed_at = task.completed_at

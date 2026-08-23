@@ -14,6 +14,7 @@ from app.storage.database import Base
 from app.storage.migrations import migrate_sqlite_schema
 from app.storage.orm import TaskRecord
 from app.storage.repositories.project_repository import ProjectRepository
+from app.storage.repositories.task_repository import TaskRepository
 from app.services.task_service import TaskService
 from app.agents.planner.planner import PlannerAgent
 from app.agents.providers import MockLLMProvider
@@ -121,11 +122,17 @@ def test_workspace_validator_rejects_relative_unc_and_sibling(local_project_root
     root = local_project_root / "App"
     sibling = local_project_root / "App-Other"
     root.mkdir(); sibling.mkdir()
+    ordinary_file = local_project_root / "not-a-directory.txt"
+    ordinary_file.write_text("fixture", encoding="utf-8")
     validator = WorkspaceValidator.for_project(root)
     with pytest.raises(WorkspaceValidationError):
         WorkspaceValidator.canonicalize_project_root("relative/path")
     with pytest.raises(WorkspaceValidationError):
         WorkspaceValidator.canonicalize_project_root(r"\\server\share")
+    with pytest.raises(WorkspaceValidationError):
+        WorkspaceValidator.canonicalize_project_root(local_project_root / "missing")
+    with pytest.raises(WorkspaceValidationError):
+        WorkspaceValidator.canonicalize_project_root(ordinary_file)
     with pytest.raises(WorkspaceValidationError):
         validator.validate_target(root, sibling)
 
@@ -255,6 +262,26 @@ def test_new_task_derives_workspace_from_project(db_session, local_project_root)
     assert Path(task.workspace).resolve() == workspace.resolve()
 
 
+def test_task_project_binding_is_immutable(db_session, local_project_root):
+    first_root = local_project_root / "binding-a"
+    second_root = local_project_root / "binding-b"
+    first_root.mkdir(); second_root.mkdir()
+    service = ProjectService(db_session)
+    first = service.create(name="A", description=None, workspace_root=str(first_root),
+                           environment="test", allowed_capability_ids=("repository_state",))
+    second = service.create(name="B", description=None, workspace_root=str(second_root),
+                            environment="test", allowed_capability_ids=("repository_state",))
+    task = TaskService(db_session).create_task(
+        title="Bound", goal="Stay bound", project_id=first.id
+    )
+    PlannerAgent(db_session, MockLLMProvider()).create_plan(task.id)
+    task.project_id = second.id
+    task.workspace = second.workspace_root
+
+    with pytest.raises(ValueError, match="Project binding is immutable"):
+        TaskRepository(db_session).update(task)
+
+
 def test_legacy_task_is_readable_but_has_no_execution_context(db_session, local_project_root):
     from app.projects.service import ProjectService
 
@@ -352,6 +379,68 @@ def test_project_policy_drift_invalidates_approved_snapshot(db_session, local_pr
         )
 
 
+@pytest.mark.parametrize("drift", ["capability_removed", "workspace_changed"])
+def test_project_authority_drift_invalidates_old_approval(
+    drift, db_session, local_project_root
+):
+    project, task, plan = create_project_plan(db_session, local_project_root)
+    approval = ApprovalService(db_session).create_request(
+        task_id=task.id, plan_id=plan.id, plan_version=plan.version
+    )
+    ApprovalService(db_session).approve(approval.id, actor="operator")
+    changes = {"allowed_capability_ids": ()}
+    if drift == "workspace_changed":
+        replacement = local_project_root / "replacement-workspace"
+        replacement.mkdir()
+        changes = {"workspace_root": str(replacement)}
+    ProjectService(db_session).update(
+        project.id, expected_config_version=1, **changes
+    )
+    from app.capabilities.models import ResolvedExecutionSnapshot
+    with pytest.raises((ApprovalError, PermissionError), match="authority|drift"):
+        ApprovalService(db_session).assert_snapshot_allowed(
+            ResolvedExecutionSnapshot.from_dict(plan.plan_json["resolved_steps"][0])
+        )
+
+
+def test_replanner_rejects_capability_outside_project_policy(db_session, local_project_root):
+    from app.agent_runtime.observer import RuntimeObserver
+    from app.agents.replanning.models import ReplanOutcomeStatus, StepSummary
+    from app.agents.replanning.service import ReplanningService
+    from app.capabilities.models import ResolvedExecutionSnapshot
+    from app.tools.gateway import ToolExecutionResult
+
+    _, task, plan = create_project_plan(db_session, local_project_root)
+    approval = ApprovalService(db_session).create_request(
+        task_id=task.id, plan_id=plan.id, plan_version=plan.version
+    )
+    ApprovalService(db_session).approve(approval.id, actor="operator")
+    failed_snapshot = ResolvedExecutionSnapshot(
+        task_id=task.id, plan_id=plan.id, plan_version=plan.version,
+        step_id="failed-test", capability_id="test_verification",
+        resolved_tool_id="test_run", resolved_action="run_profile",
+        normalized_parameters=(("profile", "smoke"),), registry_fingerprint="0" * 64,
+    )
+    observation = RuntimeObserver().observe(
+        snapshot=failed_snapshot,
+        result=ToolExecutionResult("execution-1", "FAILED", "tests failed",
+                                   evidence_id="evidence-1"),
+        remaining_steps=0,
+    )
+    outcome = ReplanningService(db_session, MockLLMProvider()).create_successor(
+        task_id=task.id, current_plan_id=plan.id, current_plan_version=plan.version,
+        observation=observation,
+        completed_steps=(StepSummary(
+            "test_verification", {"profile": "smoke"}, "FAILED",
+            "TEST_FAILED_DIAGNOSTIC_AVAILABLE", "tests failed", ("evidence-1",)
+        ),),
+        attempted_steps=1,
+    )
+
+    assert outcome.status is ReplanOutcomeStatus.FAILED
+    assert outcome.reason_code == "INVALID_RESPONSE"
+
+
 def test_archived_project_blocks_pending_approval_and_runtime(
     db_session, local_project_root, local_artifact_root
 ):
@@ -430,6 +519,9 @@ def test_project_api_and_task_payload_are_strict(db_session, local_project_root)
         "workspace": str(local_project_root), "tool_id": "git_read",
     })
     assert injected.status_code == 422
+    assert client.post("/tasks", json={
+        "title": "Unbound", "goal": "Must fail",
+    }).status_code == 422
     created = client.post("/tasks", json={
         "project_id": project["id"], "title": "Task", "goal": "Goal",
     })
