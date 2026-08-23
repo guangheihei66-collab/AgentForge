@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { ApprovalQueueItem, CapabilityPlanStep, Plan, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
+import type { ApprovalQueueItem, CapabilityPlanStep, Plan, ProviderStatus, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
 
 const demoTask: TaskSummary = { id: 'demo-release-v2', title: 'Release v2.0 Verification', goal: 'Verify whether Release v2.0 is ready for release.', workspace: 'D:/AgentProjects/AgentForge', status: 'WAITING_APPROVAL', created_at: '2026-08-21T14:18:07Z', updated_at: '2026-08-21T14:32:01Z' }
 const demoSteps: CapabilityPlanStep[] = [
@@ -34,6 +34,7 @@ const demoPlan: Plan = { id: 'plan-demo', version: 1, validation_status: 'VALID'
 const demoSnapshot = { schema_version: 1 as const, steps: demoResolved }
 const demoApproval: ApprovalQueueItem = { id: 'approval-demo', task_id: demoTask.id, task_title: demoTask.title, plan_id: demoPlan.id, plan_version: 1, decision: 'PENDING', requested_by: 'planner-agent', created_at: '2026-08-21T14:32:01Z', plan_json: demoPlan.plan_json, resolved_snapshot: demoSnapshot }
 const demoDetail: TaskDetail = { task: demoTask, plans: [demoPlan], approvals: [{ id: demoApproval.id, plan_id: demoPlan.id, decision: 'PENDING', approver: 'pending', resolved_snapshot: demoSnapshot, created_at: demoApproval.created_at }], executions: [], evidence: [], audit: [{ id: 'audit-1', event_type: 'TASK_CREATED', actor: 'operator', payload_summary: 'Task created', correlation_id: 'corr-1', created_at: demoTask.created_at }, { id: 'audit-2', event_type: 'PLAN_CREATED', actor: 'planner', payload_summary: 'Validated plan version 1', correlation_id: 'corr-2', created_at: '2026-08-21T14:22:41Z' }] }
+const demoProvider: ProviderStatus = { provider: 'mock', model: 'deterministic-mock', configured: true, credential_configured: false, connection_status: 'not tested' }
 
 export function useOperations() {
   const [tasks, setTasks] = useState<TaskSummary[]>([demoTask])
@@ -42,6 +43,8 @@ export function useOperations() {
   const [detail, setDetail] = useState<TaskDetail>(demoDetail)
   const [report, setReport] = useState<Report>({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, evidence: [], audit_count: 2, execution_count: 0 })
   const [live, setLive] = useState(false)
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus>(demoProvider)
+  const [testingProvider, setTestingProvider] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -58,6 +61,12 @@ export function useOperations() {
   }, [selectedId])
 
   useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => { void api.getProviderStatus().then(setProviderStatus).catch(() => undefined) }, [])
+
+  async function testProviderConnection() {
+    setTestingProvider(true)
+    try { setProviderStatus(await api.testProviderConnection()) } finally { setTestingProvider(false) }
+  }
 
   async function chooseTask(id: string) {
     setSelectedId(id)
@@ -71,5 +80,5 @@ export function useOperations() {
     await refresh()
   }
 
-  return { tasks, approvals, detail, report, selectedId, chooseTask, act, refresh, live }
+  return { tasks, approvals, detail, report, selectedId, chooseTask, act, refresh, live, providerStatus, testingProvider, testProviderConnection }
 }

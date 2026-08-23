@@ -23,13 +23,20 @@ from app.agents.providers import (
 )
 from app.agents.providers.openai_compatible import OpenAICompatibleProvider
 from app.api.routes.planning import get_llm_provider
+from app.api.routes.providers import connection_state, get_status_provider
 from app.capabilities.registry import build_default_capability_registry
 from app.capabilities.resolver import CapabilityResolutionError
 from app.domain.states.task_state import TaskStatus
 from app.main import app
 from app.services.task_service import TaskService
 from app.storage.database import SessionLocal
-from app.storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, ToolExecutionRecord
+from app.storage.orm import (
+    ApprovalRecord,
+    AuditEventRecord,
+    PlanRecord,
+    TaskRecord,
+    ToolExecutionRecord,
+)
 from app.workspace.validator import WorkspaceValidator
 
 
@@ -563,3 +570,99 @@ def test_planning_api_uses_injected_provider_without_silent_fallback(db_session)
     assert failing.plan_calls == 1
     with SessionLocal() as session:
         assert TaskService(session).get_task(task["id"]).status == TaskStatus.FAILED
+
+
+def set_real_environment(monkeypatch, *, api_key: str = SECRET):
+    for name, value in real_env().items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("AGENTFORGE_LLM_API_KEY", api_key)
+
+
+def database_counts() -> dict[str, int]:
+    with SessionLocal() as session:
+        return {
+            "tasks": session.query(TaskRecord).count(),
+            "plans": session.query(PlanRecord).count(),
+            "approvals": session.query(ApprovalRecord).count(),
+            "executions": session.query(ToolExecutionRecord).count(),
+            "audit": session.query(AuditEventRecord).count(),
+        }
+
+
+def test_provider_status_exposes_no_credential_material(monkeypatch):
+    set_real_environment(monkeypatch)
+    connection_state.reset()
+
+    with TestClient(app) as client:
+        response = client.get("/llm/provider")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "openai-compatible",
+        "configured": True,
+        "model": "example-model",
+        "credential_configured": True,
+        "connection_status": "not tested",
+        "failure_category": None,
+    }
+    assert SECRET not in response.text
+    assert "base_url" not in response.text
+
+
+def test_invalid_real_configuration_is_visible_without_mock_fallback(monkeypatch):
+    set_real_environment(monkeypatch, api_key="")
+    connection_state.reset()
+
+    with TestClient(app) as client:
+        response = client.get("/llm/provider")
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "openai-compatible"
+    assert response.json()["configured"] is False
+    assert response.json()["credential_configured"] is False
+    assert response.json()["failure_category"] == "NOT_CONFIGURED"
+
+
+def test_connection_test_is_explicit_and_writes_no_database_records(monkeypatch):
+    set_real_environment(monkeypatch)
+    connection_state.reset()
+    fake = FakeProvider()
+    app.dependency_overrides[get_status_provider] = lambda: fake
+    try:
+        with TestClient(app) as client:
+            before = database_counts()
+            status = client.get("/llm/provider")
+            assert fake.connection_calls == 0
+            response = client.post("/llm/provider/test")
+            after = database_counts()
+    finally:
+        app.dependency_overrides.clear()
+
+    assert status.json()["connection_status"] == "not tested"
+    assert response.status_code == 200
+    assert response.json()["connection_status"] == "success"
+    assert fake.connection_calls == 1
+    assert fake.plan_calls == 0
+    assert before == after
+
+
+def test_connection_failure_returns_only_safe_category(monkeypatch):
+    set_real_environment(monkeypatch)
+    connection_state.reset()
+    fake = FakeProvider(
+        error=ProviderError(
+            ProviderErrorCategory.AUTHENTICATION_FAILED,
+            safe_message=SECRET,
+        )
+    )
+    app.dependency_overrides[get_status_provider] = lambda: fake
+    try:
+        with TestClient(app) as client:
+            response = client.post("/llm/provider/test")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["connection_status"] == "failed"
+    assert response.json()["failure_category"] == "AUTHENTICATION_FAILED"
+    assert SECRET not in response.text

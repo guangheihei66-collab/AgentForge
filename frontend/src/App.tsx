@@ -11,7 +11,7 @@ export function App() {
   const ops = useOperations()
   return <Shell page={page} setPage={setPage} pending={ops.approvals.length}>
     {!ops.live && <div className="demo-banner">Demo data preview · connect the FastAPI backend to use live task data.</div>}
-    {page === 'dashboard' && <Dashboard tasks={ops.tasks} approvals={ops.approvals} onTask={(id) => { void ops.chooseTask(id); setPage('detail') }} onApprovals={() => setPage('approvals')} />}
+    {page === 'dashboard' && <Dashboard tasks={ops.tasks} approvals={ops.approvals} providerStatus={ops.providerStatus} testingProvider={ops.testingProvider} onTestProvider={() => void ops.testProviderConnection()} onTask={(id) => { void ops.chooseTask(id); setPage('detail') }} onApprovals={() => setPage('approvals')} />}
     {page === 'approvals' && <Approvals approvals={ops.approvals} onApprove={(id) => void ops.act('approve', id)} onReject={(id) => void ops.act('reject', id)} onCancel={() => void ops.act('cancel')} />}
     {page === 'detail' && <TaskDetail detail={ops.detail} onBack={() => setPage('dashboard')} onReport={() => setPage('report')} />}
     {page === 'report' && <Report report={ops.report} onBack={() => setPage('detail')} />}

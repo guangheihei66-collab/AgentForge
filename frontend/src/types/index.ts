@@ -30,8 +30,18 @@ export type ResolvedExecutionSnapshot = {
 
 export type PlanDocument = {
   schema_version: 2
+  summary?: string
   steps: CapabilityPlanStep[]
   resolved_steps: ResolvedExecutionSnapshot[]
+}
+
+export type ProviderStatus = {
+  provider: string
+  model: string
+  configured: boolean
+  credential_configured: boolean
+  connection_status: 'not tested' | 'success' | 'failed'
+  failure_category?: string | null
 }
 
 export type ApprovalSnapshot = {
