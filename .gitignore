@@ -29,6 +29,7 @@ test-runs/
 # Local editor and OS files
 .idea/
 .vscode/
+/.worktrees/
 *.log
 launcher/logs/*
 !launcher/logs/
