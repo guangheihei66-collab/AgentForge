@@ -20,3 +20,4 @@ class ToolDefinition:
     allowed_actions: tuple[str, ...]
     executor: ToolExecutor
     enabled: bool = True
+    execution_contract_version: str = "1"

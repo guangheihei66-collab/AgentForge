@@ -28,6 +28,7 @@ class TestTool:
             permission_level=PermissionLevel.APPROVED_EXEC,
             allowed_actions=("run_profile",),
             executor=self,
+            execution_contract_version="1",
         )
 
     def execute(self, action: str, parameters: dict[str, Any], workspace: str) -> dict[str, Any]:

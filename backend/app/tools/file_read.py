@@ -30,6 +30,7 @@ class FileReadTool:
             permission_level=PermissionLevel.SAFE_READ,
             allowed_actions=("read_metadata",),
             executor=self,
+            execution_contract_version="1",
         )
 
     def execute(self, action: str, parameters: dict[str, Any], workspace: str) -> dict[str, Any]:

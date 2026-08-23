@@ -24,6 +24,7 @@ class GitReadTool:
             permission_level=PermissionLevel.SAFE_READ,
             allowed_actions=tuple(self.ACTIONS),
             executor=self,
+            execution_contract_version="1",
         )
 
     def execute(self, action: str, parameters: dict[str, Any], workspace: str) -> dict[str, Any]:
