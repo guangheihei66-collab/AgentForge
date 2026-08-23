@@ -1,12 +1,14 @@
 """Deterministic Agent Runtime execution loop."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from ..agents.replanning.models import ReplanOutcomeStatus, StepSummary
+from ..agents.replanning.service import ReplanningService
 from ..approvals.service import ApprovalService
 from ..capabilities.models import ResolvedExecutionSnapshot
 from ..capabilities.registry import build_default_capability_registry
@@ -28,6 +30,9 @@ class RuntimeResult:
     decision: RuntimeDecision
     completed_steps: int
     observations: tuple[RuntimeObservation, ...]
+    successor_plan_id: str | None = None
+    successor_plan_version: int | None = None
+    approval_id: str | None = None
 
 
 class AgentRuntime:
@@ -39,6 +44,7 @@ class AgentRuntime:
         executor: RuntimeExecutor,
         resolver: CapabilityResolver | None = None,
         observer: RuntimeObserver | None = None,
+        replanning_service: ReplanningService | None = None,
     ):
         self.session = session
         self.executor = executor
@@ -46,6 +52,7 @@ class AgentRuntime:
             build_default_capability_registry(), executor.gateway.registry
         )
         self.observer = observer or RuntimeObserver()
+        self.replanning_service = replanning_service
 
     def run(self, *, task_id: str, plan_id: str, plan_version: int) -> RuntimeResult:
         task = self.session.get(TaskRecord, task_id)
@@ -155,6 +162,20 @@ class AgentRuntime:
                 result=result,
                 remaining_steps=remaining,
             )
+            lineage = plan.plan_json.get("replan_lineage")
+            if (
+                observation.decision == RuntimeDecision.COMPLETE
+                and isinstance(lineage, dict)
+                and lineage.get("reason_code")
+                == "TEST_FAILED_DIAGNOSTIC_AVAILABLE"
+            ):
+                observation = replace(
+                    observation,
+                    decision=RuntimeDecision.FAIL,
+                    decision_summary=(
+                        "NOT READY: test failure confirmed by project metadata"
+                    ),
+                )
             observations.append(observation)
             self._audit_decision(task_id, runtime_snapshot, observation)
 
@@ -167,6 +188,64 @@ class AgentRuntime:
                     observation.decision_summary,
                 )
                 continue
+
+            if observation.decision == RuntimeDecision.REPLAN:
+                if self.replanning_service is None:
+                    summary = "Replanning is unavailable"
+                    TaskService(self.session).transition_task(
+                        task_id,
+                        TaskStatus.FAILED,
+                        actor="agent_runtime",
+                        reason=summary,
+                    )
+                    self._transition(
+                        runtime_snapshot, task_id, RuntimeState.FAILED, summary
+                    )
+                    return RuntimeResult(
+                        task_id,
+                        plan_id,
+                        plan_version,
+                        RuntimeState.FAILED,
+                        RuntimeDecision.FAIL,
+                        runtime_snapshot.completed_steps,
+                        tuple(observations),
+                    )
+                outcome = self.replanning_service.create_successor(
+                    task_id=task_id,
+                    current_plan_id=plan_id,
+                    current_plan_version=plan_version,
+                    observation=observation,
+                    completed_steps=self._step_summaries(observations),
+                    attempted_steps=index + 1,
+                )
+                if outcome.status != ReplanOutcomeStatus.WAITING_APPROVAL:
+                    self._transition(
+                        runtime_snapshot,
+                        task_id,
+                        RuntimeState.FAILED,
+                        outcome.summary,
+                    )
+                    return RuntimeResult(
+                        task_id,
+                        plan_id,
+                        plan_version,
+                        RuntimeState.FAILED,
+                        RuntimeDecision.FAIL,
+                        runtime_snapshot.completed_steps,
+                        tuple(observations),
+                    )
+                return RuntimeResult(
+                    task_id=task_id,
+                    plan_id=plan_id,
+                    plan_version=plan_version,
+                    state=RuntimeState.OBSERVING,
+                    decision=RuntimeDecision.REPLAN,
+                    completed_steps=runtime_snapshot.completed_steps,
+                    observations=tuple(observations),
+                    successor_plan_id=outcome.plan_id,
+                    successor_plan_version=outcome.plan_version,
+                    approval_id=outcome.approval_id,
+                )
 
             if observation.decision == RuntimeDecision.COMPLETE:
                 runtime_snapshot.completed_steps += 1
@@ -216,6 +295,22 @@ class AgentRuntime:
 
         # Plan validation requires at least one step, but keep the invariant explicit.
         raise ValueError("Runtime cannot complete an empty plan")
+
+    @staticmethod
+    def _step_summaries(
+        observations: list[RuntimeObservation],
+    ) -> tuple[StepSummary, ...]:
+        return tuple(
+            StepSummary(
+                capability_id=item.capability_id,
+                parameters={},
+                status=item.status,
+                reason_code=item.reason_code.value,
+                summary=item.result_summary[:500],
+                evidence_refs=item.evidence_refs[:5],
+            )
+            for item in observations[-12:]
+        )
 
     def _transition(
         self,

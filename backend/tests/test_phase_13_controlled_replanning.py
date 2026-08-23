@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from app.agent_runtime.observer import ObservationReason, RuntimeObserver
 from app.agent_runtime.state import RuntimeDecision
+from app.agent_runtime.runtime import AgentRuntime
+from app.agent_runtime.state import RuntimeState
 from app.capabilities.models import ResolvedExecutionSnapshot
 from app.capabilities.models import CapabilityRequest
 from app.capabilities.registry import build_default_capability_registry
@@ -471,3 +473,81 @@ def test_replanning_service_rejects_stale_plan_version(db_session):
         )
 
     assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 1
+
+
+class DeterministicReplanExecutor:
+    def __init__(self):
+        self.capabilities = []
+
+    def execute(self, **values):
+        capability = values["snapshot"].capability_id
+        self.capabilities.append(capability)
+        if capability == "test_verification":
+            return tool_result(
+                status="FAILED",
+                summary="unit profile failed",
+                evidence_id="evidence-test-failure",
+            )
+        if capability == "project_metadata":
+            return ToolExecutionResult(
+                execution_id="execution-metadata",
+                status="SUCCESS",
+                summary="version configuration does not match release 2.0",
+                evidence_id="evidence-version-config",
+            )
+        return ToolExecutionResult(
+            execution_id="execution-repository",
+            status="SUCCESS",
+            summary="repository state captured",
+            evidence_id="evidence-repository",
+        )
+
+
+def test_runtime_pauses_v1_on_replan_and_requires_v2_approval(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    executor = DeterministicReplanExecutor()
+    runtime = AgentRuntime(
+        db_session,
+        executor,
+        resolver=resolver(),
+        replanning_service=service,
+    )
+
+    result = runtime.run(task_id=task.id, plan_id=plan_v1.id, plan_version=1)
+
+    assert result.decision == RuntimeDecision.REPLAN
+    assert result.state == RuntimeState.OBSERVING
+    assert result.successor_plan_version == 2
+    assert result.approval_id
+    assert executor.capabilities == ["repository_state", "test_verification"]
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.WAITING_APPROVAL.value
+    assert service.authoritative_plan(task.id).plan_id == result.successor_plan_id
+    assert service.authoritative_plan(task.id).executable is False
+
+
+def test_approved_v2_resumes_through_snapshot_and_finishes_not_ready(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    executor = DeterministicReplanExecutor()
+    runtime = AgentRuntime(
+        db_session,
+        executor,
+        resolver=resolver(),
+        replanning_service=service,
+    )
+    paused = runtime.run(task_id=task.id, plan_id=plan_v1.id, plan_version=1)
+    ApprovalService(db_session).approve(paused.approval_id, actor="reviewer-v2")
+
+    result = runtime.run(
+        task_id=task.id,
+        plan_id=paused.successor_plan_id,
+        plan_version=paused.successor_plan_version,
+    )
+
+    assert service.authoritative_plan(task.id).executable is False
+    assert result.decision == RuntimeDecision.FAIL
+    assert result.state == RuntimeState.FAILED
+    assert result.observations[-1].evidence_refs == ("evidence-version-config",)
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.FAILED.value
+    assert executor.capabilities[-1] == "project_metadata"
