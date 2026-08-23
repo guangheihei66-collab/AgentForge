@@ -9,10 +9,10 @@ from app.agent_runtime.observer import ObservationReason, RuntimeObserver
 from app.agent_runtime.state import RuntimeDecision
 from app.agent_runtime.runtime import AgentRuntime
 from app.agent_runtime.state import RuntimeState
-from app.capabilities.models import ResolvedExecutionSnapshot
-from app.capabilities.models import CapabilityRequest
+from app.capabilities.models import CapabilityRequest, ResolvedExecutionSnapshot
 from app.capabilities.registry import build_default_capability_registry
 from app.capabilities.resolver import CapabilityResolver
+from app.contracts.permissions import PermissionLevel
 from app.domain.states.task_state import TaskStatus
 from app.agents.replanning.models import (
     EvidenceSummary,
@@ -29,12 +29,20 @@ from app.agents.replanning.policy import (
 )
 from app.tools.defaults import build_default_registry
 from app.tools.gateway import ToolExecutionResult
+from app.tools.models import ToolDefinition
+from app.tools.registry import ToolRegistry
 from app.workspace.validator import WorkspaceValidator
-from app.agents.providers import LLMRequest, MockLLMProvider
+from app.agents.providers import (
+    LLMRequest,
+    LLMResponse,
+    MockLLMProvider,
+    ProviderError,
+    ProviderErrorCategory,
+)
 from app.agents.replanning.service import ReplanningService, ReplanOutcomeStatus
 from app.approvals.service import ApprovalError, ApprovalService
 from app.services.task_service import TaskService
-from app.storage.orm import ApprovalRecord, PlanRecord, TaskRecord
+from app.storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, TaskRecord
 
 
 REPO_ROOT = r"D:\AgentProjects\AgentForge"
@@ -93,6 +101,9 @@ def test_failed_test_with_evidence_is_replan_candidate():
     assert observation.replan_recommended is True
     assert observation.decision == RuntimeDecision.REPLAN
     assert observation.evidence_refs == ("evidence-test-failure",)
+    assert observation.execution_metadata["normalized_parameters"] == {
+        "profile": "smoke"
+    }
     assert len(observation.result_summary) <= 2_000
     assert isinstance(observation.created_at, datetime)
     with pytest.raises(FrozenInstanceError):
@@ -441,6 +452,7 @@ def test_replanning_service_creates_immutable_v2_with_fresh_approval(db_session)
     assert plan_v2.version == 2
     assert db_session.get(PlanRecord, plan_v1.id).plan_json == original_v1
     lineage = plan_v2.plan_json["replan_lineage"]
+    assert lineage["original_plan_id"] == plan_v1.id
     assert lineage["previous_plan_id"] == plan_v1.id
     assert lineage["previous_plan_version"] == 1
     assert lineage["triggering_observation_id"] == observation.observation_id
@@ -551,3 +563,359 @@ def test_approved_v2_resumes_through_snapshot_and_finishes_not_ready(db_session)
     assert result.observations[-1].evidence_refs == ("evidence-version-config",)
     assert db_session.get(TaskRecord, task.id).status == TaskStatus.FAILED.value
     assert executor.capabilities[-1] == "project_metadata"
+
+
+def test_release_verification_replan_audit_is_reconstructable_and_bounded(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    executor = DeterministicReplanExecutor()
+    runtime = AgentRuntime(
+        db_session, executor, resolver=resolver(), replanning_service=service
+    )
+    paused = runtime.run(task_id=task.id, plan_id=plan_v1.id, plan_version=1)
+    ApprovalService(db_session).approve(paused.approval_id, actor="reviewer-v2")
+    finished = runtime.run(
+        task_id=task.id,
+        plan_id=paused.successor_plan_id,
+        plan_version=paused.successor_plan_version,
+    )
+
+    events = (
+        db_session.query(AuditEventRecord)
+        .filter_by(task_id=task.id)
+        .order_by(AuditEventRecord.created_at.asc(), AuditEventRecord.id.asc())
+        .all()
+    )
+    event_types = [event.event_type for event in events]
+    for required in (
+        "RUNTIME_EXECUTION",
+        "RUNTIME_OBSERVATION",
+        "RUNTIME_DECISION",
+        "REPLAN_REQUESTED",
+        "REPLAN_PROPOSED",
+        "PLAN_VERSION_CREATED",
+        "REPLAN_APPROVAL_REQUIRED",
+        "EXECUTION_SNAPSHOT_APPROVED",
+        "REPLAN_RESUMED",
+    ):
+        assert required in event_types
+    observations = [
+        json.loads(event.payload_summary)
+        for event in events
+        if event.event_type == "RUNTIME_OBSERVATION"
+    ]
+    assert any(item["reason_code"] == "TEST_FAILED_DIAGNOSTIC_AVAILABLE" for item in observations)
+    assert any(item["evidence_refs"] == ["evidence-version-config"] for item in observations)
+    assert finished.decision == RuntimeDecision.FAIL
+    serialized = json.dumps([event.payload_summary for event in events])
+    for forbidden in (
+        "PHASE13_TEST_SECRET_DO_NOT_LEAK",
+        "Authorization",
+        "Chain of Thought",
+        "full prompt",
+    ):
+        assert forbidden not in serialized
+    for event in events:
+        if event.event_type.startswith("REPLAN") or event.event_type == "PLAN_VERSION_CREATED":
+            assert len(event.payload_summary.encode("utf-8")) <= 8 * 1024
+
+
+def test_authoritative_plan_rejects_tampered_v2_snapshot(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    outcome = service.create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+    ApprovalService(db_session).approve(outcome.approval_id, actor="reviewer-v2")
+    plan_v2 = db_session.get(PlanRecord, outcome.plan_id)
+    payload = dict(plan_v2.plan_json)
+    resolved = [dict(payload["resolved_steps"][0])]
+    resolved[0]["registry_fingerprint"] = "0" * 64
+    plan_v2.plan_json = {**payload, "resolved_steps": resolved}
+    db_session.commit()
+
+    with pytest.raises((ApprovalError, ValueError)):
+        service.authoritative_plan(task.id)
+
+
+def test_authoritative_plan_never_resumes_v1_after_incomplete_replan_request(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    db_session.add(
+        AuditEventRecord(
+            task_id=task.id,
+            event_type="REPLAN_REQUESTED",
+            actor="replanning_service",
+            payload_summary=json.dumps({"plan_id": plan_v1.id, "plan_version": 1}),
+            correlation_id="phase13-incomplete-replan",
+        )
+    )
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="incomplete"):
+        ReplanningService(
+            db_session, MockLLMProvider(), REPO_ROOT
+        ).authoritative_plan(task.id)
+
+
+class FailingReplanProvider(MockLLMProvider):
+    category = ProviderErrorCategory.TIMEOUT
+
+    def generate_replan(self, request):
+        del request
+        raise ProviderError(self.category)
+
+
+def test_provider_failure_fails_task_and_records_safe_rejection(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    service = ReplanningService(db_session, FailingReplanProvider(), REPO_ROOT)
+
+    outcome = service.create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.FAILED.value
+    rejection = (
+        db_session.query(AuditEventRecord)
+        .filter_by(task_id=task.id, event_type="REPLAN_REJECTED")
+        .one()
+    )
+    assert "TIMEOUT" in rejection.payload_summary
+    events = {
+        event.event_type
+        for event in db_session.query(AuditEventRecord).filter_by(task_id=task.id)
+    }
+    assert {"REPLAN_REQUESTED", "REPLAN_REJECTED"} <= events
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 1
+
+
+def test_provider_authentication_failure_fails_closed(db_session):
+    class AuthenticationFailureProvider(FailingReplanProvider):
+        category = ProviderErrorCategory.AUTHENTICATION_FAILED
+
+    task, plan_v1, _ = create_approved_v1(db_session)
+    outcome = ReplanningService(
+        db_session, AuthenticationFailureProvider(), REPO_ROOT
+    ).create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert outcome.reason_code == ProviderErrorCategory.AUTHENTICATION_FAILED.value
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.FAILED.value
+
+
+class CancellingReplanProvider(MockLLMProvider):
+    def __init__(self, session, task_id):
+        self.session = session
+        self.task_id = task_id
+
+    def generate_replan(self, request):
+        del request
+        ApprovalService(self.session).cancel_task(
+            self.task_id, actor="operator", reason="cancel during replan"
+        )
+        return LLMResponse(
+            payload=valid_replan_payload(),
+            provider="mock",
+            model="deterministic-mock",
+            duration_ms=0,
+            attempt_count=1,
+        )
+
+
+def test_cancellation_after_provider_response_prevents_v2_persistence(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    provider = CancellingReplanProvider(db_session, task.id)
+    service = ReplanningService(db_session, provider, REPO_ROOT)
+
+    outcome = service.create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.CANCELLED.value
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 1
+
+
+class PayloadReplanProvider(MockLLMProvider):
+    def __init__(self, payload):
+        self.payload = payload
+
+    def generate_replan(self, request):
+        del request
+        return LLMResponse(
+            payload=self.payload,
+            provider="mock",
+            model="deterministic-mock",
+            duration_ms=0,
+            attempt_count=1,
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {
+            "decision_summary": "forbidden",
+            "revised_remaining_steps": [
+                {
+                    "step_id": "bad",
+                    "capability_id": "project_metadata",
+                    "parameters": {"relative_path": "PROJECT_CONTEXT.md"},
+                    "command": "shell",
+                }
+            ],
+        },
+        {
+            "decision_summary": "unknown",
+            "revised_remaining_steps": [
+                {"step_id": "bad", "capability_id": "unknown", "parameters": {}}
+            ],
+        },
+    ],
+)
+def test_invalid_replan_proposal_fails_closed(payload, db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    service = ReplanningService(
+        db_session, PayloadReplanProvider(payload), REPO_ROOT
+    )
+
+    outcome = service.create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.FAILED.value
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 1
+
+
+def test_duplicate_replan_proposal_fails_closed(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    duplicate = {
+        "decision_summary": "repeat current plan",
+        "revised_remaining_steps": plan_v1.plan_json["steps"],
+    }
+    service = ReplanningService(
+        db_session, PayloadReplanProvider(duplicate), REPO_ROOT
+    )
+
+    outcome = service.create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert outcome.reason_code == "INVALID_RESPONSE"
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 1
+
+
+def test_zero_resolver_candidate_rolls_back_successor(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service.resolver = CapabilityResolver(
+        build_default_capability_registry(), ToolRegistry()
+    )
+
+    outcome = service.create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 1
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.FAILED.value
+
+
+def test_multiple_resolver_candidates_fail_closed(db_session):
+    class NoopExecutor:
+        def execute(self, action, parameters, workspace):
+            del action, parameters, workspace
+            return {"status": "SUCCESS"}
+
+    capabilities = build_default_capability_registry()
+    project_metadata = capabilities.require("project_metadata")
+    capabilities._capabilities["project_metadata"] = replace(
+        project_metadata, candidate_tool_ids=("file_a", "file_b")
+    )
+    tools = ToolRegistry()
+    for name in ("file_a", "file_b"):
+        tools.register(
+            ToolDefinition(
+                name=name,
+                description="test tool",
+                risk_level="medium",
+                permission_level=PermissionLevel.SAFE_READ,
+                allowed_actions=("read_metadata",),
+                executor=NoopExecutor(),
+            )
+        )
+
+    task, plan_v1, _ = create_approved_v1(db_session)
+    service = ReplanningService(db_session, MockLLMProvider(), REPO_ROOT)
+    service.capability_registry = capabilities
+    service.resolver = CapabilityResolver(capabilities, tools)
+    outcome = service.create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 1
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.FAILED.value
+
+
+def test_service_policy_budget_denial_fails_closed(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    outcome = ReplanningService(
+        db_session, MockLLMProvider(), REPO_ROOT
+    ).create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=12,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert outcome.reason_code == ObservationReason.BUDGET_EXHAUSTED.value
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.FAILED.value

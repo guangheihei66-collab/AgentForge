@@ -121,6 +121,18 @@ class AgentRuntime:
         runtime_snapshot = RuntimeSnapshot()
         observations: list[RuntimeObservation] = []
         self._transition(runtime_snapshot, task_id, RuntimeState.RUNNING, "Runtime started for approved plan")
+        if isinstance(plan.plan_json.get("replan_lineage"), dict):
+            self._audit_event(
+                task_id,
+                "REPLAN_RESUMED",
+                {
+                    "plan_id": plan.id,
+                    "plan_version": plan.version,
+                    "previous_plan_id": plan.plan_json["replan_lineage"].get(
+                        "previous_plan_id"
+                    ),
+                },
+            )
 
         for index, (step, resolved_step) in enumerate(ordered):
             runtime_snapshot.current_step_id = resolved_step.step_id
@@ -156,7 +168,6 @@ class AgentRuntime:
                 f"Observing result for step {step['step_id']}",
             )
             self._audit_execution(task_id, resolved_step, result)
-            self._audit_observation(task_id, runtime_snapshot, resolved_step, result)
             observation = self.observer.observe(
                 snapshot=resolved_step,
                 result=result,
@@ -176,6 +187,7 @@ class AgentRuntime:
                         "NOT READY: test failure confirmed by project metadata"
                     ),
                 )
+            self._audit_observation(task_id, resolved_step, observation)
             observations.append(observation)
             self._audit_decision(task_id, runtime_snapshot, observation)
 
@@ -303,7 +315,9 @@ class AgentRuntime:
         return tuple(
             StepSummary(
                 capability_id=item.capability_id,
-                parameters={},
+                parameters=dict(
+                    item.execution_metadata.get("normalized_parameters", {})
+                ),
                 status=item.status,
                 reason_code=item.reason_code.value,
                 summary=item.result_summary[:500],
@@ -342,18 +356,24 @@ class AgentRuntime:
     def _audit_observation(
         self,
         task_id: str,
-        snapshot: RuntimeSnapshot,
         resolved: ResolvedExecutionSnapshot,
-        result,
+        observation: RuntimeObservation,
     ) -> None:
         payload = {
+            "observation_id": observation.observation_id,
             "step_id": resolved.step_id,
             "capability_id": resolved.capability_id,
-            "tool_name": resolved.resolved_tool_id,
+            "tool_id": resolved.resolved_tool_id,
             "registry_fingerprint": resolved.registry_fingerprint,
-            "execution_id": result.execution_id,
-            "status": result.status,
-            "tool_result_summary": (result.summary or "")[:2_000],
+            "execution_id": observation.execution_id,
+            "status": observation.status,
+            "result_summary": observation.result_summary[:2_000],
+            "evidence_refs": list(observation.evidence_refs[:5]),
+            "reason_code": observation.reason_code.value,
+            "retryable": observation.retryable,
+            "replan_recommended": observation.replan_recommended,
+            "decision": observation.decision.value,
+            "created_at": observation.created_at.isoformat(),
         }
         self.session.add(
             AuditEventRecord(
@@ -361,6 +381,23 @@ class AgentRuntime:
                 event_type="RUNTIME_OBSERVATION",
                 actor="agent_runtime",
                 payload_summary=json.dumps(payload, ensure_ascii=False),
+                correlation_id=str(uuid4()),
+            )
+        )
+        self.session.commit()
+
+    def _audit_event(
+        self, task_id: str, event_type: str, payload: dict[str, Any]
+    ) -> None:
+        serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if len(serialized.encode("utf-8")) > 8 * 1024:
+            raise ValueError("Runtime audit payload exceeds the size limit")
+        self.session.add(
+            AuditEventRecord(
+                task_id=task_id,
+                event_type=event_type,
+                actor="agent_runtime",
+                payload_summary=serialized,
                 correlation_id=str(uuid4()),
             )
         )

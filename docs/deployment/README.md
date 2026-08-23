@@ -39,6 +39,10 @@ Use [.env.example](../../.env.example) as the documented variable list. `.env` i
 
 The default planning provider is `mock`, which performs no network calls. The optional `openai-compatible` provider requires `AGENTFORGE_LLM_BASE_URL`, `AGENTFORGE_LLM_MODEL`, and `AGENTFORGE_LLM_API_KEY`. Use HTTPS except for loopback development endpoints. Timeout and output-token limits are bounded by the application; redirects are disabled and provider responses are size-limited. The console reports only secret-free configuration and connection state. Provider settings are not persisted to SQLite.
 
+Controlled re-planning uses the same selected provider and never silently falls back from a real provider to Mock. Runtime decisions are limited to `CONTINUE`, `COMPLETE`, `FAIL`, and `REPLAN`. A replan may occur at most twice and all versions together may contain at most twelve steps; context is capped at 8 KiB and the complete prompt at 12 KiB. Each successor plan, including safe-read-only plans, must receive a fresh approval before execution. Earlier plan versions remain immutable, and an earlier approval cannot authorize a successor.
+
+Re-planning audit data is limited to bounded summaries, reason codes, fingerprints, and evidence references. Chain of Thought, raw provider responses, raw tool output, and provider credentials are not persisted. Phase 13 introduces no database migration, dependency installation, or frontend setup requirement.
+
 ## Operational boundary
 
 The deployment exposes a read-safe Tool Gateway with approval authorization. It does not permit arbitrary shell commands, destructive file operations, Git writes, local model downloads, or Docker runtime management.

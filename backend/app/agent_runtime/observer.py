@@ -63,6 +63,7 @@ class RuntimeObserver:
             "status": result.status,
             "artifact_path": result.artifact_path,
             "evidence_id": result.evidence_id,
+            "normalized_parameters": snapshot.parameters_dict(),
         }
         if result.status != "SUCCESS":
             can_replan = (

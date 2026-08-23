@@ -76,6 +76,8 @@ Final Report
 
 The Planner produces semantic capability requirements but cannot choose or execute concrete tools. The application-owned resolver requires exactly one registered, enabled, permission-compatible, parameter-valid candidate and fails closed otherwise. The Approval Gateway binds a human decision to the capability, resolved tool, normalized parameters, registry fingerprint, task, plan, and plan version. AgentRuntime consumes that approved snapshot, while the Tool Gateway remains the final permission and workspace boundary. Operations endpoints expose execution, evidence, and audit records to the React console.
 
+After bounded diagnostic evidence, Runtime may choose one of four decisions: `CONTINUE`, `COMPLETE`, `FAIL`, or `REPLAN`. A `REPLAN` pauses execution and lets the configured provider propose capability-only remaining steps. Application policy, validation, deterministic resolution, and a fresh human approval all run before a successor version can execute; the previous plan and approval never authorize that successor.
+
 ## Security Design
 
 - Permission boundary: default-deny policy with explicit `SAFE_READ` and `APPROVED_EXEC` levels.
@@ -135,7 +137,7 @@ npm run build
 
 ## Status and boundaries
 
-Phase 12 real LLM provider integration is implemented behind the existing governed planning boundary. It adds bounded OpenAI-compatible transport, strict configuration validation, safe provider status and explicit connection testing, while preserving deterministic capability resolution and approval-bound execution. The mock provider remains the default. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+Phase 13 controlled re-planning is implemented behind the existing governed planning boundary. It allows at most two replans and twelve total steps across versions, with an 8 KiB context cap and 12 KiB complete-prompt cap. Every successor version, including safe-read-only plans, requires fresh approval of exact resolved snapshots. Plan v1 remains immutable and cannot authorize v2. Audit records contain bounded summaries and references, not Chain of Thought, raw model/tool output, or provider credentials. Mock remains deterministic and offline; a real-provider failure never silently falls back to Mock. Phase 13 requires no database migration or frontend setup. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 Runtime data belongs under `D:\AgentProjectData\AgentForge\`, never in this source tree.
 

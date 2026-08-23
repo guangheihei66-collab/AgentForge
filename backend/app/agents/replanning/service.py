@@ -6,19 +6,20 @@ from threading import RLock
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
+from pydantic import ValidationError
 
 from ...agent_runtime.observer import RuntimeObservation
 from ...approvals.service import ApprovalError, ApprovalService
 from ...capabilities.models import CapabilityRequest
 from ...capabilities.registry import build_default_capability_registry
-from ...capabilities.resolver import CapabilityResolver
+from ...capabilities.resolver import CapabilityResolutionError, CapabilityResolver
 from ...domain.states.task_state import TaskStatus
 from ...services.plan_repository import PlanRepository
 from ...storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, TaskRecord
 from ...tools.defaults import build_default_registry
 from ...workspace.validator import WorkspaceValidator
-from ..planner.validator import PlanValidator
-from ..providers.base import LLMProvider, LLMRequest
+from ..planner.validator import PlanValidationError, PlanValidator
+from ..providers.base import LLMProvider, LLMRequest, ProviderError
 from .models import (
     AuthoritativePlan,
     EvidenceSummary,
@@ -101,6 +102,10 @@ class ReplanningService:
             and step.reason_code == observation.reason_code.value
             for step in completed_steps
         )
+        persisted_step_count = sum(
+            len(plan.plan_json.get("steps", []))
+            for plan in self.session.query(PlanRecord).filter_by(task_id=task_id).all()
+        )
         policy = ReplanPolicy().evaluate(
             ReplanPolicyInput(
                 task_status=TaskStatus(task.status),
@@ -108,7 +113,7 @@ class ReplanningService:
                 current_plan_id=current.id,
                 current_plan_version=current.version,
                 replan_count=self.plans.count_replans(task_id),
-                total_steps=attempted_steps,
+                total_steps=max(attempted_steps, persisted_step_count),
                 current_plan_fingerprint=current_fingerprint,
                 previous_plan_fingerprints=previous_fingerprints,
                 current_progress_fingerprint=current_progress,
@@ -117,7 +122,12 @@ class ReplanningService:
             )
         )
         if policy.decision.value != "REPLAN":
-            raise ValueError(f"Replan policy denied request: {policy.reason_code.value}")
+            return self._reject(
+                task_id,
+                policy.reason_code.value,
+                "Replan policy denied request",
+                transition_failed=True,
+            )
 
         evidence = tuple(
             EvidenceSummary(ref, self._evidence_summary(ref, completed_steps), None)
@@ -141,34 +151,73 @@ class ReplanningService:
             "observation_id": observation.observation_id,
             "reason_code": observation.reason_code.value,
         })
+        self.session.commit()
         prompt = build_replan_prompt(context, self.capability_registry)
-        response = self.provider.generate_replan(
-            LLMRequest(
-                prompt=prompt,
-                context={},
-                output_schema=ReplanProposal.model_json_schema(),
+        try:
+            response = self.provider.generate_replan(
+                LLMRequest(
+                    prompt=prompt,
+                    context={},
+                    output_schema=ReplanProposal.model_json_schema(),
+                )
             )
-        )
-        proposal = ReplanProposal.model_validate(dict(response.payload))
-        if len(proposal.revised_remaining_steps) > policy.remaining_steps:
-            raise ValueError("Replan proposal exceeds remaining step budget")
-        validated = self.validator.validate(
-            {
-                "schema_version": 2,
-                "summary": proposal.decision_summary,
-                "steps": [step.model_dump(mode="json") for step in proposal.revised_remaining_steps],
-            },
-            task.workspace,
-        )
-        proposed_requests = [
-            CapabilityRequest(step.capability_id, step.parameters)
-            for step in validated.steps
-        ]
-        proposal_fingerprint = canonical_plan_fingerprint(
-            proposed_requests, self.resolver
-        )
-        if proposal_fingerprint == current_fingerprint or proposal_fingerprint in previous_fingerprints:
-            raise ValueError("Replan proposal is duplicate/no-progress")
+        except ProviderError as exc:
+            return self._reject(
+                task_id,
+                exc.category.value,
+                "Replan provider failed",
+                transition_failed=True,
+            )
+        self.session.expire_all()
+        refreshed_task = self.session.get(TaskRecord, task_id)
+        if refreshed_task is None or refreshed_task.status == TaskStatus.CANCELLED.value:
+            return self._reject(
+                task_id,
+                "CANCELLED",
+                "Task was cancelled during replanning",
+                transition_failed=False,
+            )
+        try:
+            proposal = ReplanProposal.model_validate(dict(response.payload))
+            if len(proposal.revised_remaining_steps) > policy.remaining_steps:
+                raise ValueError("Replan proposal exceeds remaining step budget")
+            validated = self.validator.validate(
+                {
+                    "schema_version": 2,
+                    "summary": proposal.decision_summary,
+                    "steps": [
+                        step.model_dump(mode="json")
+                        for step in proposal.revised_remaining_steps
+                    ],
+                },
+                task.workspace,
+            )
+            proposed_requests = [
+                CapabilityRequest(step.capability_id, step.parameters)
+                for step in validated.steps
+            ]
+            proposal_fingerprint = canonical_plan_fingerprint(
+                proposed_requests, self.resolver
+            )
+            if (
+                proposal_fingerprint == current_fingerprint
+                or proposal_fingerprint in previous_fingerprints
+            ):
+                raise ValueError("Replan proposal is duplicate/no-progress")
+        except (
+            ValidationError,
+            PlanValidationError,
+            CapabilityResolutionError,
+            LookupError,
+            TypeError,
+            ValueError,
+        ):
+            return self._reject(
+                task_id,
+                "INVALID_RESPONSE",
+                "Replan proposal failed validation",
+                transition_failed=True,
+            )
 
         with _REPLAN_LOCK:
             highest = self.plans.highest_for_task(task_id)
@@ -181,17 +230,28 @@ class ReplanningService:
                 plan_json={**validated.model_dump(mode="json"), "resolved_steps": []},
                 validation_status="VALID",
             )
-            resolved = [
-                self.resolver.resolve(
-                    task_id=task_id,
-                    plan_id=record.id,
-                    plan_version=next_version,
-                    step_id=step.step_id,
-                    request=CapabilityRequest(step.capability_id, step.parameters),
-                ).to_dict()
-                for step in validated.steps
-            ]
+            try:
+                resolved = [
+                    self.resolver.resolve(
+                        task_id=task_id,
+                        plan_id=record.id,
+                        plan_version=next_version,
+                        step_id=step.step_id,
+                        request=CapabilityRequest(
+                            step.capability_id, step.parameters
+                        ),
+                    ).to_dict()
+                    for step in validated.steps
+                ]
+            except (CapabilityResolutionError, LookupError, ValueError):
+                return self._reject(
+                    task_id,
+                    "CAPABILITY_RESOLUTION_FAILED",
+                    "Replan capability resolution failed",
+                    transition_failed=True,
+                )
             lineage = {
+                "original_plan_id": self._original_plan_id(current),
                 "previous_plan_id": current.id,
                 "previous_plan_version": current.version,
                 "triggering_observation_id": observation.observation_id,
@@ -249,6 +309,18 @@ class ReplanningService:
         plan = self.plans.highest_for_task(task_id)
         if task is None or plan is None or plan.validation_status != "VALID":
             raise ValueError("No authoritative valid plan exists")
+        incomplete_requests = (
+            self.session.query(AuditEventRecord)
+            .filter_by(task_id=task_id, event_type="REPLAN_REQUESTED")
+            .all()
+        )
+        for event in incomplete_requests:
+            try:
+                requested = json.loads(event.payload_summary)
+            except (TypeError, json.JSONDecodeError):
+                raise ValueError("Replan recovery found malformed request state") from None
+            if requested.get("plan_id") == plan.id:
+                raise ValueError("Replan recovery found an incomplete request")
         approval = (
             self.session.query(ApprovalRecord)
             .filter_by(task_id=task_id, plan_id=plan.id)
@@ -260,12 +332,57 @@ class ReplanningService:
             and approval.decision == "APPROVED"
             and task.status == TaskStatus.RUNNING.value
         )
+        if executable:
+            snapshots = plan.plan_json.get("resolved_steps")
+            if not isinstance(snapshots, list) or not snapshots:
+                raise ValueError("Authoritative plan has no resolved snapshots")
+            from ...capabilities.models import ResolvedExecutionSnapshot
+
+            for raw in snapshots:
+                snapshot = ResolvedExecutionSnapshot.from_dict(raw)
+                ApprovalService(self.session).assert_snapshot_allowed(snapshot)
+                self.resolver.verify(snapshot)
         return AuthoritativePlan(
             plan.id,
             plan.version,
             approval.id if approval else None,
             approval.decision if approval else None,
             executable,
+        )
+
+    def _reject(
+        self,
+        task_id: str,
+        reason_code: str,
+        summary: str,
+        *,
+        transition_failed: bool,
+    ) -> ReplanOutcome:
+        self.session.rollback()
+        self._audit(
+            task_id,
+            "REPLAN_REJECTED",
+            {"reason_code": reason_code, "summary": summary[:500]},
+        )
+        if transition_failed:
+            from ...services.task_service import TaskService
+
+            TaskService(self.session).transition_task(
+                task_id,
+                TaskStatus.FAILED,
+                actor="replanning_service",
+                reason=f"{summary}: {reason_code}",
+            )
+        else:
+            self.session.commit()
+        return ReplanOutcome(
+            ReplanOutcomeStatus.FAILED,
+            task_id,
+            None,
+            None,
+            None,
+            reason_code,
+            summary,
         )
 
     @staticmethod
