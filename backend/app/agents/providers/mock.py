@@ -27,6 +27,25 @@ class MockLLMProvider:
             attempt_count=1,
         )
 
+    def generate_replan(self, request: LLMRequest) -> LLMResponse:
+        del request
+        return LLMResponse(
+            payload={
+                "decision_summary": "Inspect bounded project metadata.",
+                "revised_remaining_steps": [
+                    {
+                        "step_id": "replan-1-step-1",
+                        "capability_id": "project_metadata",
+                        "parameters": {"relative_path": "PROJECT_CONTEXT.md"},
+                    }
+                ],
+            },
+            provider=self.provider_name,
+            model=self.model_name,
+            duration_ms=0,
+            attempt_count=1,
+        )
+
     def test_connection(self) -> LLMResponse:
         return LLMResponse(
             payload={"status": "ok"},

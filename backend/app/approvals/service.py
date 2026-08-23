@@ -34,6 +34,7 @@ class ApprovalService:
         if task.status not in {
             TaskStatus.PLANNING.value,
             TaskStatus.WAITING_APPROVAL.value,
+            TaskStatus.RUNNING.value,
         }:
             raise ApprovalError(f"Task is not ready for approval: {task.status}")
 
@@ -48,7 +49,10 @@ class ApprovalService:
 
         resolved_snapshot = self._snapshot_document(plan)
 
-        if task.status == TaskStatus.PLANNING.value:
+        if task.status in {
+            TaskStatus.PLANNING.value,
+            TaskStatus.RUNNING.value,
+        }:
             TaskService(self.session).transition_task(
                 task_id,
                 TaskStatus.WAITING_APPROVAL,

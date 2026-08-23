@@ -59,6 +59,14 @@ class OpenAICompatibleProvider:
             max_tokens=self.config.max_output_tokens,
         )
 
+    def generate_replan(self, request: LLMRequest) -> LLMResponse:
+        return self._complete(
+            prompt=request.prompt,
+            output_schema=request.output_schema,
+            schema_name="agentforge_replan",
+            max_tokens=self.config.max_output_tokens,
+        )
+
     def test_connection(self) -> LLMResponse:
         response = self._complete(
             prompt="Return a JSON object with status set to ok.",

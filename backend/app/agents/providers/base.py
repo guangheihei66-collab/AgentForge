@@ -74,5 +74,8 @@ class LLMProvider(Protocol):
     def generate_plan(self, request: LLMRequest) -> LLMResponse:
         """Return untrusted candidate planning data without executing tools."""
 
+    def generate_replan(self, request: LLMRequest) -> LLMResponse:
+        """Return untrusted capability-only remaining-plan data."""
+
     def test_connection(self) -> LLMResponse:
         """Perform one bounded, non-plan compatibility check."""

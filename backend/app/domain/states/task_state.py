@@ -26,7 +26,12 @@ ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
         {TaskStatus.RUNNING, TaskStatus.CANCELLED}
     ),
     TaskStatus.RUNNING: frozenset(
-        {TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        {
+            TaskStatus.WAITING_APPROVAL,
+            TaskStatus.SUCCESS,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        }
     ),
     TaskStatus.SUCCESS: frozenset(),
     TaskStatus.FAILED: frozenset(),

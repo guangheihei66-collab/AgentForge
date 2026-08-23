@@ -14,6 +14,20 @@ class PlanRepository:
         current = self.session.query(func.max(PlanRecord.version)).filter_by(task_id=task_id).scalar()
         return int(current or 0) + 1
 
+    def highest_for_task(self, task_id: str) -> PlanRecord | None:
+        return (
+            self.session.query(PlanRecord)
+            .filter_by(task_id=task_id)
+            .order_by(PlanRecord.version.desc(), PlanRecord.created_at.desc())
+            .first()
+        )
+
+    def count_replans(self, task_id: str) -> int:
+        plans = self.session.query(PlanRecord).filter_by(task_id=task_id).all()
+        return sum(
+            isinstance(plan.plan_json.get("replan_lineage"), dict) for plan in plans
+        )
+
     def create(self, *, task_id: str, version: int, plan_json: dict, validation_status: str) -> PlanRecord:
         plan = PlanRecord(
             task_id=task_id,
