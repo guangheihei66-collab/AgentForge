@@ -55,6 +55,9 @@ class LLMResponse:
 
 
 class LLMProvider(Protocol):
+    provider_name: str
+    model_name: str
+
     def generate_plan(self, request: LLMRequest) -> LLMResponse:
         """Return untrusted candidate planning data without executing tools."""
 

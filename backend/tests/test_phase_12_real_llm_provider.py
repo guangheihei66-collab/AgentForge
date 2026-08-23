@@ -5,9 +5,16 @@ import json
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
+from app.agents.planner.planner import PlannerAgent
+from app.agents.planner.prompts import build_planning_prompt
+from app.agents.planner.schemas import PlanContract
+from app.agents.planner.validator import PlanValidationError, PlanValidator
 from app.agents.providers import (
     LLMRequest,
+    LLMResponse,
     MockLLMProvider,
     ProviderError,
     ProviderErrorCategory,
@@ -15,9 +22,19 @@ from app.agents.providers import (
     load_provider_config,
 )
 from app.agents.providers.openai_compatible import OpenAICompatibleProvider
+from app.api.routes.planning import get_llm_provider
+from app.capabilities.registry import build_default_capability_registry
+from app.capabilities.resolver import CapabilityResolutionError
+from app.domain.states.task_state import TaskStatus
+from app.main import app
+from app.services.task_service import TaskService
+from app.storage.database import SessionLocal
+from app.storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, ToolExecutionRecord
+from app.workspace.validator import WorkspaceValidator
 
 
 SECRET = "PHASE12_TEST_SECRET_DO_NOT_LEAK"
+REPO_ROOT = r"D:\AgentProjects\AgentForge"
 
 
 def real_env(base_url: str = "https://llm.example.test/v1") -> dict[str, str]:
@@ -355,3 +372,194 @@ def test_connection_check_uses_fixed_non_plan_payload_and_small_budget():
     serialized = json.dumps(captured["body"])
     assert "repository" not in serialized.lower()
     assert "business" not in serialized.lower()
+
+
+class FakeProvider:
+    provider_name = "openai-compatible"
+    model_name = "fake-model"
+
+    def __init__(self, *, payload: dict | None = None, error: ProviderError | None = None):
+        self.payload = payload or valid_plan()
+        self.error = error
+        self.plan_calls = 0
+        self.connection_calls = 0
+
+    def generate_plan(self, request: LLMRequest) -> LLMResponse:
+        self.plan_calls += 1
+        if self.error:
+            raise self.error
+        return LLMResponse(
+            payload=self.payload,
+            provider=self.provider_name,
+            model=self.model_name,
+            duration_ms=12,
+            attempt_count=1,
+            input_tokens=10,
+            output_tokens=7,
+        )
+
+    def test_connection(self) -> LLMResponse:
+        self.connection_calls += 1
+        if self.error:
+            raise self.error
+        return LLMResponse(
+            payload={"status": "ok"}, provider=self.provider_name,
+            model=self.model_name, duration_ms=4, attempt_count=1,
+        )
+
+
+def repository_step() -> dict:
+    return {"step_id": "step-1", "capability_id": "repository_state", "parameters": {}}
+
+
+def test_summary_is_bounded_and_old_v2_plan_remains_readable():
+    old = PlanContract.model_validate({"schema_version": 2, "steps": [repository_step()]})
+
+    assert old.summary == ""
+    with pytest.raises(ValidationError):
+        PlanContract.model_validate(
+            {"schema_version": 2, "summary": "x" * 501, "steps": [repository_step()]}
+        )
+
+
+def test_prompt_contains_capabilities_not_concrete_tools_or_secrets():
+    prompt = build_planning_prompt(
+        "Check release", build_default_capability_registry(), {"release": "2.0"}
+    )
+
+    assert "repository_state" in prompt
+    assert "profile" in prompt and "smoke" in prompt
+    assert "git_read" not in prompt and "test_run" not in prompt
+    assert SECRET not in prompt
+
+
+def test_prompt_rejects_oversized_context():
+    with pytest.raises(ValueError, match="context"):
+        build_planning_prompt(
+            "Check release", build_default_capability_registry(), {"summary": "x" * 4097}
+        )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"tool_id": "git_read"},
+        {"command": "git status"},
+        {"permission": "SAFE_READ"},
+        {"approval": "APPROVED"},
+        {"workspace": "C:/"},
+    ],
+)
+def test_model_cannot_add_execution_authority(extra: dict):
+    payload = valid_plan()
+    payload["steps"][0].update(extra)
+    validator = PlanValidator(WorkspaceValidator(REPO_ROOT))
+
+    with pytest.raises(PlanValidationError):
+        validator.validate(payload, REPO_ROOT)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"schema_version": 2, "summary": "empty", "steps": []},
+        {"schema_version": 2, "summary": "unknown", "steps": [{"step_id": "1", "capability_id": "unknown", "parameters": {}}]},
+        {"schema_version": 2, "summary": "command", "steps": [{"step_id": "1", "capability_id": "test_verification", "parameters": {"profile": "smoke", "command": "bash"}}]},
+        {"schema_version": 2, "summary": "large", "steps": [repository_step() for _ in range(21)]},
+    ],
+)
+def test_invalid_provider_plan_never_resolves(payload: dict):
+    validator = PlanValidator(WorkspaceValidator(REPO_ROOT))
+    with pytest.raises(PlanValidationError):
+        validator.validate(payload, REPO_ROOT)
+
+
+def test_invalid_capability_parameters_fail_during_resolution(db_session):
+    task = TaskService(db_session).create_task(
+        title="Invalid capability", goal="Check release", workspace=REPO_ROOT
+    )
+    payload = {
+        "schema_version": 2,
+        "summary": "Invalid profile",
+        "steps": [
+            {
+                "step_id": "step-1",
+                "capability_id": "test_verification",
+                "parameters": {"profile": "all"},
+            }
+        ],
+    }
+
+    with pytest.raises(CapabilityResolutionError):
+        PlannerAgent(db_session, FakeProvider(payload=payload), REPO_ROOT).create_plan(task.id)
+
+    assert TaskService(db_session).get_task(task.id).status == TaskStatus.FAILED
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 0
+
+
+def test_provider_plan_is_validated_resolved_and_safely_audited(db_session):
+    task = TaskService(db_session).create_task(
+        title="Phase 12", goal="Check release", workspace=REPO_ROOT
+    )
+
+    plan = PlannerAgent(db_session, FakeProvider(), REPO_ROOT).create_plan(task.id)
+
+    refreshed = TaskService(db_session).get_task(task.id)
+    assert refreshed.status == TaskStatus.WAITING_APPROVAL
+    assert plan.plan_json["summary"] == "Inspect repository state."
+    assert plan.plan_json["resolved_steps"][0]["resolved_tool_id"] == "git_read"
+    events = db_session.query(AuditEventRecord).filter_by(task_id=task.id).all()
+    event_types = {event.event_type for event in events}
+    assert {"LLM_PLAN_REQUESTED", "LLM_PLAN_SUCCEEDED"}.issubset(event_types)
+    serialized = json.dumps([event.payload_summary for event in events])
+    assert SECRET not in serialized
+    assert db_session.query(ApprovalRecord).filter_by(task_id=task.id).count() == 0
+    assert db_session.query(ToolExecutionRecord).filter_by(task_id=task.id).count() == 0
+
+
+def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
+    task = TaskService(db_session).create_task(
+        title="Phase 12 failure", goal="Check release", workspace=REPO_ROOT
+    )
+    provider = FakeProvider(
+        error=ProviderError(
+            ProviderErrorCategory.TIMEOUT,
+            safe_message="Provider timed out",
+            attempt_count=3,
+            duration_ms=1234,
+        )
+    )
+
+    with pytest.raises(ProviderError):
+        PlannerAgent(db_session, provider, REPO_ROOT).create_plan(task.id)
+
+    assert TaskService(db_session).get_task(task.id).status == TaskStatus.FAILED
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 0
+    events = db_session.query(AuditEventRecord).filter_by(task_id=task.id).all()
+    assert "LLM_PLAN_FAILED" in {event.event_type for event in events}
+    assert SECRET not in json.dumps([event.payload_summary for event in events])
+
+
+def test_planning_api_uses_injected_provider_without_silent_fallback(db_session):
+    failing = FakeProvider(
+        error=ProviderError(
+            ProviderErrorCategory.NETWORK_ERROR,
+            safe_message="Provider unavailable",
+        )
+    )
+    app.dependency_overrides[get_llm_provider] = lambda: failing
+    try:
+        with TestClient(app) as client:
+            task = client.post(
+                "/tasks",
+                json={"title": "API Phase 12", "goal": "Check", "workspace": REPO_ROOT},
+            ).json()
+            response = client.post(f"/tasks/{task['id']}/plan", json={})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "LLM planning failed: NETWORK_ERROR"
+    assert failing.plan_calls == 1
+    with SessionLocal() as session:
+        assert TaskService(session).get_task(task["id"]).status == TaskStatus.FAILED

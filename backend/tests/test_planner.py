@@ -4,6 +4,7 @@ import pytest
 
 from app.agents.planner.planner import PlannerAgent
 from app.agents.planner.validator import PlanValidationError, PlanValidator
+from app.agents.providers.base import LLMRequest, LLMResponse
 from app.agents.providers.mock import MockLLMProvider
 from app.domain.states.task_state import TaskStatus
 from app.services.task_service import TaskService
@@ -23,12 +24,27 @@ def make_task(session):
 
 
 class FixedProvider:
+    provider_name = "fixed"
+    model_name = "fixed-test-model"
+
     def __init__(self, value):
         self.value = value
 
-    def generate_plan(self, prompt, context):
-        del prompt, context
-        return self.value
+    def generate_plan(self, request: LLMRequest) -> LLMResponse:
+        del request
+        return LLMResponse(
+            payload=self.value,
+            provider=self.provider_name,
+            model=self.model_name,
+            duration_ms=0,
+            attempt_count=1,
+        )
+
+    def test_connection(self) -> LLMResponse:
+        return LLMResponse(
+            payload={"status": "ok"}, provider=self.provider_name,
+            model=self.model_name, duration_ms=0, attempt_count=1,
+        )
 
 
 def validator():
@@ -44,7 +60,9 @@ def test_valid_plan_generated_and_validated(db_session):
     assert plan.plan_json["steps"][0]["capability_id"] == "repository_state"
     assert plan.plan_json["resolved_steps"][0]["resolved_tool_id"] == "git_read"
     assert db_session.get(TaskRecord, task.id).status == TaskStatus.WAITING_APPROVAL.value
-    assert db_session.query(AuditEventRecord).filter_by(event_type="PLAN_CREATED").count() == 1
+    assert db_session.query(AuditEventRecord).filter_by(
+        task_id=task.id, event_type="PLAN_CREATED"
+    ).count() == 1
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,7 @@ class PlanContract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal[2]
+    summary: str = Field(default="", max_length=500)
     steps: list[CapabilityPlanStep] = Field(min_length=1, max_length=20)
 
 

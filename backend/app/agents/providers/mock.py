@@ -4,6 +4,9 @@ from .base import LLMRequest, LLMResponse
 
 
 class MockLLMProvider:
+    provider_name = "mock"
+    model_name = "deterministic-mock"
+
     def generate_plan(self, request: LLMRequest) -> LLMResponse:
         del request
         return LLMResponse(
@@ -18,8 +21,8 @@ class MockLLMProvider:
                     }
                 ],
             },
-            provider="mock",
-            model="deterministic-mock",
+            provider=self.provider_name,
+            model=self.model_name,
             duration_ms=0,
             attempt_count=1,
         )
@@ -27,8 +30,8 @@ class MockLLMProvider:
     def test_connection(self) -> LLMResponse:
         return LLMResponse(
             payload={"status": "ok"},
-            provider="mock",
-            model="deterministic-mock",
+            provider=self.provider_name,
+            model=self.model_name,
             duration_ms=0,
             attempt_count=1,
         )

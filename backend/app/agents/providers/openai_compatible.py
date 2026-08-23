@@ -43,6 +43,14 @@ class OpenAICompatibleProvider:
         self.transport = transport
         self.sleeper = sleeper
 
+    @property
+    def provider_name(self) -> str:
+        return "openai-compatible"
+
+    @property
+    def model_name(self) -> str:
+        return self.config.model
+
     def generate_plan(self, request: LLMRequest) -> LLMResponse:
         return self._complete(
             prompt=request.prompt,

@@ -540,28 +540,39 @@ def test_runtime_rejects_registry_drift_before_tool_execution(db_session):
 
 def test_multi_step_capability_flow_is_auditable_end_to_end(db_session):
     class MultiStepProvider:
-        def generate_plan(self, prompt, context):
-            del prompt, context
-            return {
-                "schema_version": 2,
-                "steps": [
-                    {
-                        "step_id": "step-1",
-                        "capability_id": "repository_state",
-                        "parameters": {},
-                    },
-                    {
-                        "step_id": "step-2",
-                        "capability_id": "project_metadata",
-                        "parameters": {"relative_path": "PROJECT_CONTEXT.md"},
-                    },
-                    {
-                        "step_id": "step-3",
-                        "capability_id": "test_verification",
-                        "parameters": {"profile": "smoke"},
-                    },
-                ],
-            }
+        provider_name = "multi-step-test"
+        model_name = "deterministic-test"
+
+        def generate_plan(self, request):
+            del request
+            from app.agents.providers.base import LLMResponse
+
+            return LLMResponse(
+                payload={
+                    "schema_version": 2,
+                    "steps": [
+                        {
+                            "step_id": "step-1",
+                            "capability_id": "repository_state",
+                            "parameters": {},
+                        },
+                        {
+                            "step_id": "step-2",
+                            "capability_id": "project_metadata",
+                            "parameters": {"relative_path": "PROJECT_CONTEXT.md"},
+                        },
+                        {
+                            "step_id": "step-3",
+                            "capability_id": "test_verification",
+                            "parameters": {"profile": "smoke"},
+                        },
+                    ],
+                },
+                provider=self.provider_name,
+                model=self.model_name,
+                duration_ms=0,
+                attempt_count=1,
+            )
 
     task = TaskService(db_session).create_task(
         title="Phase 11.2 integration",
