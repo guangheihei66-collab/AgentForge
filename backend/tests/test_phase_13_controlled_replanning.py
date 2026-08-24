@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timezone
 import json
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -40,7 +41,10 @@ from app.agents.providers import (
     MockLLMProvider,
     ProviderError,
     ProviderErrorCategory,
+    ProviderConfig,
+    StructuredOutputMode,
 )
+from app.agents.providers.openai_compatible import OpenAICompatibleProvider
 from app.agents.replanning.service import ReplanningService, ReplanOutcomeStatus
 from app.approvals.service import ApprovalError, ApprovalService
 from app.services.task_service import TaskService
@@ -469,6 +473,67 @@ def test_replanning_service_creates_immutable_v2_with_fresh_approval(db_session)
     )
     with pytest.raises(ApprovalError):
         ApprovalService(db_session).assert_snapshot_allowed(v2_snapshot)
+
+
+def json_object_replan_provider(payload: dict) -> OpenAICompatibleProvider:
+    config = ProviderConfig(
+        provider="openai-compatible",
+        base_url="https://llm.example.test/v1",
+        model="example-model",
+        api_key="test-secret",
+        structured_output_mode=StructuredOutputMode.JSON_OBJECT,
+    )
+    return OpenAICompatibleProvider(
+        config,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": json.dumps(payload)}}]
+                },
+            )
+        ),
+        sleeper=lambda _: None,
+    )
+
+
+def test_json_object_replan_uses_existing_validation_and_fresh_approval(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+
+    outcome = ReplanningService(
+        db_session, json_object_replan_provider(valid_replan_payload())
+    ).create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.WAITING_APPROVAL
+    assert outcome.plan_version == 2
+    assert db_session.get(ApprovalRecord, outcome.approval_id).decision == "PENDING"
+
+
+def test_invalid_json_object_replan_is_rejected(db_session):
+    task, plan_v1, _ = create_approved_v1(db_session)
+    invalid = {"decision_summary": "invalid", "revised_remaining_steps": []}
+
+    outcome = ReplanningService(
+        db_session, json_object_replan_provider(invalid)
+    ).create_successor(
+        task_id=task.id,
+        current_plan_id=plan_v1.id,
+        current_plan_version=1,
+        observation=replan_observation(),
+        completed_steps=(failed_step_summary(),),
+        attempted_steps=2,
+    )
+
+    assert outcome.status == ReplanOutcomeStatus.FAILED
+    assert outcome.reason_code == "INVALID_RESPONSE"
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 1
 
 
 def test_replanning_service_rejects_stale_plan_version(db_session):
