@@ -11,9 +11,14 @@ from .health import classify_overall
 def _provider() -> tuple[dict[str, object], str]:
     try:
         config = load_provider_config()
+        from ..api.routes.providers import connection_state
+
+        snapshot = connection_state.get()
         if not config.configured:
             return {"provider": config.provider, "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": "NOT_CONFIGURED"}, "DEGRADED"
-        return {"provider": config.provider, "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": "UNKNOWN"}, "UNKNOWN"
+        connection = {"success": "SUCCESS", "failed": "FAILED"}.get(snapshot.status, "UNKNOWN")
+        state = "HEALTHY" if snapshot.status == "success" else ("DEGRADED" if snapshot.status == "failed" else "UNKNOWN")
+        return {"provider": config.provider, "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": connection}, state
     except Exception:
         return {"provider": "UNKNOWN", "model": "UNKNOWN", "structured_output_mode": "UNKNOWN", "credential_configured": False, "connection": "UNKNOWN"}, "UNKNOWN"
 

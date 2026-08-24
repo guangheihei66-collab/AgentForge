@@ -15,7 +15,7 @@ class RuntimeIdentity:
 
 
 def _version() -> str:
-    package = Path(__file__).resolve().parents[4] / "frontend" / "package.json"
+    package = Path(__file__).resolve().parents[3] / "frontend" / "package.json"
     try:
         return str(json.loads(package.read_text(encoding="utf-8"))["version"])
     except (OSError, KeyError, TypeError, ValueError):
@@ -23,7 +23,7 @@ def _version() -> str:
 
 
 def _revision() -> str | None:
-    root = Path(__file__).resolve().parents[4]
+    root = Path(__file__).resolve().parents[3]
     try:
         value = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=root, check=True,
