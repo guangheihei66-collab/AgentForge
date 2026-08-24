@@ -1,8 +1,13 @@
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from app.agents.planner.planner import PlannerAgent
+from app.metadata_manifest import build_metadata_manifest
 from app.agents.planner.validator import PlanValidationError, PlanValidator
 from app.agents.providers.base import LLMRequest, LLMResponse
 from app.agents.providers.mock import MockLLMProvider
@@ -109,3 +114,41 @@ def test_planner_integration_saves_plan_and_waits_for_approval(db_session):
 
     assert db_session.get(PlanRecord, plan.id).version == 1
     assert db_session.get(TaskRecord, task.id).status == TaskStatus.WAITING_APPROVAL.value
+
+
+def test_metadata_manifest_contains_only_existing_allowlisted_files(tmp_path):
+    manifest = build_metadata_manifest(REPO_ROOT)
+    assert "README.md" in manifest
+    assert "package.json" not in manifest
+    assert "frontend/package.json" in manifest
+    assert "backend/requirements.txt" in manifest
+
+
+def test_plan_validator_rejects_metadata_path_missing_from_manifest(tmp_path):
+    validator_with_manifest = PlanValidator(
+        WorkspaceValidator(REPO_ROOT), metadata_manifest=build_metadata_manifest(REPO_ROOT)
+    )
+
+    with pytest.raises(PlanValidationError, match="manifest"):
+        validator_with_manifest.validate(
+            {
+                "schema_version": 2,
+                "steps": [{
+                    "step_id": "read-package",
+                    "capability_id": "project_metadata",
+                    "parameters": {"relative_path": "package.json"},
+                }],
+            },
+            REPO_ROOT,
+        )
+
+
+def test_capability_registry_import_has_no_manifest_import_cycle():
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).parents[1])}
+    result = subprocess.run(
+        [sys.executable, "-c", "from app.capabilities.resolver import CapabilityResolver"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

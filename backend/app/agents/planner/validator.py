@@ -24,8 +24,15 @@ class PlanValidator:
         "credential", "password", "token",
     }
 
-    def __init__(self, workspace_validator: WorkspaceValidator):
+    def __init__(
+        self,
+        workspace_validator: WorkspaceValidator,
+        metadata_manifest: tuple[str, ...] | None = None,
+    ):
         self.workspace_validator = workspace_validator
+        self.metadata_manifest = (
+            None if metadata_manifest is None else frozenset(metadata_manifest)
+        )
 
     def validate(self, raw: str | dict[str, Any], workspace: str) -> PlanContract:
         payload = self._parse_json(raw)
@@ -50,6 +57,13 @@ class PlanValidator:
                     f"Forbidden parameter in capability: {step.capability_id}",
                     diagnostics=self._simple_diagnostics("forbidden_parameter"),
                 )
+            if step.capability_id == "project_metadata" and self.metadata_manifest is not None:
+                relative_path = step.parameters.get("relative_path")
+                if relative_path not in self.metadata_manifest:
+                    raise PlanValidationError(
+                        "project_metadata path is not present in the metadata manifest",
+                        diagnostics=self._simple_diagnostics("metadata_not_grounded"),
+                    )
         return plan
 
     @staticmethod

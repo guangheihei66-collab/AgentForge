@@ -50,6 +50,8 @@ def build_planning_prompt(
         "step_id must be a non-empty string. "
         "Never select a concrete tool, command, permission, approval, workspace, "
         "executable path, or filesystem path. Do not provide hidden reasoning.\n"
+        "For project_metadata steps, relative_path must be one of the paths in "
+        "the application-owned metadata_manifest. Never invent a metadata path.\n"
         f"Capability catalog: {catalog_json}\n"
         f"Goal: {goal}\nContext: {context_json}"
     )

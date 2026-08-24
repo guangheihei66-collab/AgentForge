@@ -7,19 +7,11 @@ from typing import Any
 from .models import ToolDefinition
 from ..contracts.permissions import PermissionLevel
 from ..workspace.validator import WorkspaceValidator
+from ..metadata_manifest import METADATA_MANIFEST_FILES
 
 
 class FileReadTool:
-    ALLOWED_FILES = {
-        "README.md",
-        "PROJECT_CONTEXT.md",
-        "AGENTS.md",
-        "requirements.txt",
-        "pyproject.toml",
-        "package.json",
-        "package-lock.json",
-        "tsconfig.json",
-    }
+    ALLOWED_FILES = set(METADATA_MANIFEST_FILES)
 
     def __init__(self, validator: WorkspaceValidator):
         self.validator = validator

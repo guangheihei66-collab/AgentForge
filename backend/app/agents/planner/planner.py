@@ -23,6 +23,7 @@ from ..providers.base import (
     ProviderErrorCategory,
 )
 from .prompts import build_planning_prompt
+from ...metadata_manifest import build_metadata_manifest
 from .schemas import PlanContract
 from .validator import PlanValidationError, PlanValidator
 
@@ -53,6 +54,8 @@ class PlannerAgent:
             project_context.workspace_root
         )
         validator = PlanValidator(workspace_validator)
+        metadata_manifest = build_metadata_manifest(project_context.workspace_root)
+        validator = PlanValidator(workspace_validator, metadata_manifest)
         resolver = CapabilityResolver(
             effective_registry, build_default_registry(workspace_validator)
         )
@@ -79,7 +82,9 @@ class PlannerAgent:
                             "name": project.name,
                             "environment": project.environment,
                             "description": (project.description or "")[:500],
+                            "metadata_manifest": list(metadata_manifest),
                         },
+                        "metadata_manifest": list(metadata_manifest),
                     },
                 ),
                 context=context or {},
