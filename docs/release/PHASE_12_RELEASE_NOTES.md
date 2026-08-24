@@ -1,12 +1,17 @@
 # AgentForge Phase 12 Release Notes
 
-## Status
+## Version
 
-This local release candidate contains the completed governed real-provider lifecycle:
+- Version: `0.1.0-beta.1`
+- Tag: `v0.1.0-beta.1`
+- Status: Beta / prerelease
+- Distribution: source repository + Windows launcher scripts
+
+This private GitHub Beta contains the completed governed real-provider lifecycle:
 
 `Goal -> DeepSeek Planner -> grounding -> validation -> capability resolution -> human approval -> snapshot and Project authority -> Execute -> Runtime -> ToolGateway -> Evidence/Audit -> report`
 
-The candidate was locally merged into `main` at commit `8e88617`. Publication, tagging, packaging, and push remain separate operator-authorized actions.
+The release is published from `main` with the annotated tag `v0.1.0-beta.1`.
 
 ## Included capabilities
 
@@ -28,6 +33,6 @@ The candidate was locally merged into `main` at commit `8e88617`. Publication, t
 - Frontend production build: passed.
 - Provider connection: passed with `openai-compatible`, `deepseek-v4-flash`, and `json_object` structured output.
 
-## Known scope
+## Known Beta limitations
 
-This remains a local, single-host candidate. Authentication/RBAC, managed database deployment, horizontal scaling, and write-capable tools are outside this phase.
+This is a private Beta for Windows launcher-oriented, single-host deployment. There is no installer, automatic updater, or stable-release guarantee; the release pipeline remains manual. Authentication/RBAC, managed database deployment, horizontal scaling, and write-capable tools are outside this phase.
