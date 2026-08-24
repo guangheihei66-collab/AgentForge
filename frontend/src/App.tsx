@@ -8,6 +8,7 @@ import { Report } from './pages/Report'
 import { TaskDetail } from './pages/TaskDetail'
 import { Projects } from './pages/Projects'
 import { ProjectDetail } from './pages/ProjectDetail'
+import { Diagnostics } from './pages/Diagnostics'
 
 export function App() {
   const [page, setPage] = useState<Page>('dashboard')
@@ -20,5 +21,6 @@ export function App() {
     {page === 'approvals' && <Approvals approvals={ops.approvals} actionError={ops.actionError} onApprove={(id) => void ops.act('approve', id)} onReject={(id) => void ops.act('reject', id)} onCancel={() => void ops.act('cancel')} />}
     {page === 'detail' && <TaskDetail detail={ops.detail} onBack={() => setPage('dashboard')} onReport={() => setPage('report')} />}
     {page === 'report' && <Report report={ops.report} onBack={() => setPage('detail')} />}
+    {page === 'diagnostics' && <Diagnostics />}
   </Shell>
 }

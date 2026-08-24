@@ -69,6 +69,14 @@ export type ProviderStatus = {
   connection_status: 'not tested' | 'success' | 'failed'
   failure_category?: string | null
 }
+export type HealthState = 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'UNKNOWN'
+export type Diagnostics = {
+  identity: { product: string; version: string; revision: string | null; environment: string }
+  health: { overall: HealthState; backend: HealthState; database: HealthState; provider: HealthState }
+  provider: { provider: string; model: string; structured_output_mode: string; credential_configured: boolean; connection: string }
+  recent_task: { id: string; state: string; plan_version: number | null; approval: string | null; executions: { total: number; success: number; failed: number; rejected: number }; evidence_count: number; observation_count: number; replan_count: number } | null
+  recent_errors: string[]
+}
 
 export type ApprovalSnapshot = {
   schema_version: 2

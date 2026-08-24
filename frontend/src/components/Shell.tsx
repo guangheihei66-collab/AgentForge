@@ -1,7 +1,7 @@
-import { Activity, BadgeCheck, BookOpen, ClipboardList, FileSearch, FolderKanban, Gauge, LayoutDashboard, ShieldCheck } from 'lucide-react'
+import { Activity, BadgeCheck, BookOpen, ClipboardList, FileSearch, FolderKanban, Gauge, HeartPulse, LayoutDashboard, ShieldCheck } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-export type Page = 'dashboard' | 'projects' | 'project-detail' | 'approvals' | 'detail' | 'report'
+export type Page = 'dashboard' | 'projects' | 'project-detail' | 'approvals' | 'detail' | 'report' | 'diagnostics'
 export function Shell({ page, setPage, pending, children }: { page: Page; setPage: (page: Page) => void; pending: number; children: ReactNode }) {
   const nav: { label: string; icon: typeof Gauge; page: Page }[] = [
     { label: 'Dashboard', icon: LayoutDashboard, page: 'dashboard' },
@@ -11,6 +11,7 @@ export function Shell({ page, setPage, pending, children }: { page: Page; setPag
     { label: 'Evidence', icon: FileSearch, page: 'detail' },
     { label: 'Audit', icon: Activity, page: 'detail' },
     { label: 'Reports', icon: BookOpen, page: 'report' },
+    { label: 'Diagnostics', icon: HeartPulse, page: 'diagnostics' },
   ]
   return <div className="app-shell">
     <aside className="sidebar">
