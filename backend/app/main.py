@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes.health import router as health_router
+from .api.routes.diagnostics import router as diagnostics_router
 from .api.routes.approvals import router as approvals_router
 from .api.routes.planning import router as planning_router
 from .api.routes.operations import router as operations_router
@@ -40,6 +41,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(health_router)
+app.include_router(diagnostics_router)
 app.include_router(tasks_router)
 app.include_router(projects_router)
 app.include_router(approvals_router)
