@@ -164,3 +164,33 @@ def test_operations_read_endpoints_expose_console_data(api_project_path):
     assert pending.json()[0]["task_id"] == task_id
     assert detail.json()["task"]["id"] == task_id
     assert report.json()["readiness"] == "PENDING"
+
+
+def test_execute_endpoint_runs_only_an_approved_plan(api_project_path):
+    with TestClient(app) as client:
+        project_id = create_api_project(client, api_project_path)
+        task = client.post(
+            "/tasks",
+            json={
+                "title": "Runtime API task",
+                "goal": "Exercise the approved runtime path",
+                "project_id": project_id,
+            },
+        ).json()
+        plan = client.post(f"/tasks/{task['id']}/plan", json={}).json()
+        approval = client.post(
+            f"/tasks/{task['id']}/approval",
+            json={"plan_id": plan["id"], "plan_version": 1, "requested_by": "test"},
+        ).json()
+        approved = client.post(
+            f"/approvals/{approval['id']}/approve",
+            json={"actor": "operator"},
+        )
+        response = client.post(f"/tasks/{task['id']}/execute")
+
+    assert approved.status_code == 200
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["decision"] == "COMPLETE"
+    assert body["state"] == "COMPLETED"
+    assert body["completed_steps"] == len(plan["plan_json"]["steps"])

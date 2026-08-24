@@ -11,6 +11,7 @@ from .api.routes.approvals import router as approvals_router
 from .api.routes.planning import router as planning_router
 from .api.routes.operations import router as operations_router
 from .api.routes.providers import router as providers_router
+from .api.routes.execution import router as execution_router
 from .api.routes.tasks import router as tasks_router
 from .api.routes.projects import router as projects_router
 from .storage.database import init_db
@@ -45,6 +46,7 @@ app.include_router(approvals_router)
 app.include_router(planning_router)
 app.include_router(operations_router)
 app.include_router(providers_router)
+app.include_router(execution_router)
 
 
 @app.get("/")
