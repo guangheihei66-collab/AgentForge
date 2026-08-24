@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -129,6 +130,40 @@ def test_test_profile_execution(db_session):
 
     assert result.status == "SUCCESS"
     assert "smoke" in result.summary
+
+
+def test_failed_test_profile_is_persisted_as_failed_with_evidence(db_session, monkeypatch):
+    from app.tools.test_tool import TestTool
+
+    monkeypatch.setitem(
+        TestTool.PROFILES,
+        "fixture-failure",
+        (sys.executable, "-c", "import sys; print('bounded failure diagnostic'); sys.exit(1)"),
+    )
+    task = make_task(db_session)
+    plan = approve_plan(db_session, task)
+
+    result = make_gateway(db_session).execute(
+        ToolExecutionRequest(
+            task_id=task.id,
+            tool_name="test_run",
+            action="run_profile",
+            workspace=project_workspace(db_session),
+            parameters={"profile": "fixture-failure"},
+            granted_permission=PermissionLevel.APPROVED_EXEC,
+            approved=True,
+            plan_id=plan.id,
+            plan_version=plan.version,
+            project_authority_fingerprint=project_context(db_session).authority_fingerprint,
+        )
+    )
+
+    assert result.status == "FAILED"
+    assert result.evidence_id is not None
+    execution = db_session.get(ToolExecutionRecord, result.execution_id)
+    assert execution is not None
+    assert execution.status == "FAILED"
+    assert db_session.get(EvidenceRecord, result.evidence_id) is not None
 
 
 def test_missing_permission_rejected(db_session):

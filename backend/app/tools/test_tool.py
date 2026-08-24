@@ -56,3 +56,8 @@ class TestTool:
             "stdout": stdout,
             "stderr": stderr,
         }
+
+    @staticmethod
+    def classify_result(result: dict[str, Any]) -> str:
+        """Classify the predefined test profile's domain result."""
+        return "SUCCESS" if result.get("exit_code") == 0 and result.get("success") is True else "FAILED"

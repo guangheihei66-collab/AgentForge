@@ -116,7 +116,8 @@ class ToolGateway:
             )
             artifact_path, content_hash = self._write_artifact(execution.id, result)
             summary = self._summary(result)
-            execution.status = "SUCCESS"
+            status = self._classify_result(definition, result)
+            execution.status = status
             execution.result_summary = summary
             execution.artifact_path = artifact_path
             execution.content_hash = content_hash
@@ -129,11 +130,11 @@ class ToolGateway:
             )
             self.session.add(evidence)
             self.session.flush()
-            self._audit(request, "SUCCESS", summary)
+            self._audit(request, status, summary)
             self.session.commit()
             return ToolExecutionResult(
                 execution_id=execution.id,
-                status="SUCCESS",
+                status=status,
                 summary=summary,
                 artifact_path=artifact_path,
                 content_hash=content_hash,
@@ -158,6 +159,16 @@ class ToolGateway:
                 status="FAILED",
                 summary=summary,
             )
+
+    @staticmethod
+    def _classify_result(definition: ToolDefinition, result: dict[str, Any]) -> str:
+        classifier = getattr(definition.executor, "classify_result", None)
+        if classifier is None:
+            return "SUCCESS"
+        status = classifier(result)
+        if status not in {"SUCCESS", "FAILED"}:
+            raise ValueError("Tool result classifier returned an unsupported status")
+        return status
 
     def _audit(self, request: ToolExecutionRequest, result: str, summary: str) -> None:
         payload = json.dumps(
