@@ -1,7 +1,7 @@
-# AgentForge 0.1.0-beta.1 Release Checklist
+# AgentForge 0.1.0-beta.2 Release Checklist
 
-Release: `0.1.0-beta.1`
-Tag: `v0.1.0-beta.1`
+Release: `0.1.0-beta.2`
+Tag: `v0.1.0-beta.2`
 Status: Beta / prerelease
 Distribution: source repository + Windows launcher scripts
 

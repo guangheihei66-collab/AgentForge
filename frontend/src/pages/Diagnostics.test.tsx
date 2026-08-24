@@ -5,7 +5,7 @@ import { Diagnostics } from './Diagnostics'
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 const base = (overall: string, revision: string | null = 'abc123') => ({
-  identity: { product: 'AgentForge', version: '0.1.0-beta.1', revision, environment: 'beta' },
+  identity: { product: 'AgentForge', version: '0.1.0-beta.2', revision, environment: 'beta' },
   health: { overall, backend: overall, database: overall, provider: overall },
   provider: { provider: 'openai-compatible', model: 'deepseek-v4-flash', structured_output_mode: 'json_object', credential_configured: true, connection: 'SUCCESS' },
   recent_task: null, recent_errors: [],
