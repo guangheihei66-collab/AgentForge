@@ -426,7 +426,8 @@ def test_json_object_mode_rejects_malformed_or_non_object_payload(content):
     assert exc.value.attempt_count == 1
 
 
-def test_connection_check_uses_fixed_non_plan_payload_and_small_budget():
+@pytest.mark.parametrize("mode", [StructuredOutputMode.JSON_SCHEMA, StructuredOutputMode.JSON_OBJECT])
+def test_connection_check_uses_fixed_non_plan_payload_and_bounded_budget(mode):
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -434,13 +435,15 @@ def test_connection_check_uses_fixed_non_plan_payload_and_small_budget():
         return chat_response({"status": "ok"})
 
     provider = OpenAICompatibleProvider(
-        real_config(), transport=httpx.MockTransport(handler), sleeper=lambda _: None
+        replace(real_config(), structured_output_mode=mode),
+        transport=httpx.MockTransport(handler),
+        sleeper=lambda _: None,
     )
 
     response = provider.test_connection()
 
     assert response.payload == {"status": "ok"}
-    assert captured["body"]["max_tokens"] <= 32
+    assert captured["body"]["max_tokens"] == 128
     serialized = json.dumps(captured["body"])
     assert "repository" not in serialized.lower()
     assert "business" not in serialized.lower()

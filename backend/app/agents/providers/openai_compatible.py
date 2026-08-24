@@ -78,7 +78,7 @@ class OpenAICompatibleProvider:
                 "additionalProperties": False,
             },
             schema_name="agentforge_connection",
-            max_tokens=32,
+            max_tokens=128,
         )
         if response.payload != {"status": "ok"}:
             raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE)
