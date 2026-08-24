@@ -103,6 +103,12 @@ function Get-Diagnostics {
   } catch { return $null }
 }
 
+function Test-ProviderConnection {
+  try {
+    return Invoke-RestMethod "http://127.0.0.1:8000/llm/provider/test" -Method Post -TimeoutSec 5
+  } catch { return $null }
+}
+
 function Test-Port([int]$port) {
   try {
     $connection = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $port -State Listen -ErrorAction Stop
@@ -199,6 +205,8 @@ try {
   }
   Wait-Until { Test-Port 5173 } 30 "Frontend port check"
 
+  $providerResult = Test-ProviderConnection
+  if (-not $providerResult) { Write-LauncherLog "Provider: FAILED (connection probe unavailable)" }
   $diagnostics = Get-Diagnostics
   if ($diagnostics) {
     Write-LauncherLog "Backend: $($diagnostics.health.backend); Database: $($diagnostics.health.database); Provider: $($diagnostics.health.provider)"
