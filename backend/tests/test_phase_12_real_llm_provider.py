@@ -404,6 +404,28 @@ def test_malformed_success_response_is_rejected_without_retry(response):
     assert exc.value.category == ProviderErrorCategory.INVALID_RESPONSE
 
 
+@pytest.mark.parametrize("content", ["not-json", "[]"])
+def test_json_object_mode_rejects_malformed_or_non_object_payload(content):
+    config = replace(
+        real_config(), structured_output_mode=StructuredOutputMode.JSON_OBJECT
+    )
+    response = httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": content}}]},
+    )
+    provider = OpenAICompatibleProvider(
+        config,
+        transport=httpx.MockTransport(lambda _: response),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.generate_plan(plan_request())
+
+    assert exc.value.category == ProviderErrorCategory.INVALID_RESPONSE
+    assert exc.value.attempt_count == 1
+
+
 def test_connection_check_uses_fixed_non_plan_payload_and_small_budget():
     captured = {}
 
