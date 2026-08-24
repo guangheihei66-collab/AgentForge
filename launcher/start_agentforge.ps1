@@ -1,3 +1,7 @@
+param(
+  [switch]$ResolvePythonOnly
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -74,10 +78,29 @@ function Wait-Until([scriptblock]$condition, [int]$timeoutSeconds, [string]$desc
   Fail "$description did not become ready within $timeoutSeconds seconds. See $logs."
 }
 
+$pythonOverride = $env:AGENTFORGE_PYTHON
+$hasPythonOverride = -not [string]::IsNullOrWhiteSpace($pythonOverride)
+$python = if ($hasPythonOverride) {
+  $pythonOverride
+} else {
+  Join-Path $root "backend\.venv\Scripts\python.exe"
+}
+
+if ($ResolvePythonOnly) {
+  if ($hasPythonOverride -and -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+    throw "Configured AGENTFORGE_PYTHON does not exist: $python"
+  }
+  Write-Output $python
+  exit 0
+}
+
 try {
   Write-LauncherLog "Starting AgentForge from $root"
-  $python = Join-Path $root "backend\.venv\Scripts\python.exe"
-  if (-not (Test-Path -LiteralPath $python)) { Fail "Backend virtual environment not found: $python" }
+  if ($hasPythonOverride) {
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { Fail "Configured AGENTFORGE_PYTHON does not exist: $python" }
+  } elseif (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+    Fail "Backend virtual environment not found: $python"
+  }
   $node = Get-Command node.exe -ErrorAction SilentlyContinue
   $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
   if (-not $node) { Fail "Node.js was not found on PATH." }
