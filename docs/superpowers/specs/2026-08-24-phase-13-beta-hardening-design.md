@@ -166,9 +166,18 @@ The bug workflow is:
 
 No speculative fixes are accepted. Frozen architecture changes require the evidence gate in Section 2.
 
-## 12. Out of scope
+## 12. Scope boundaries
 
-Phase 13 excludes multi-Agent orchestration, long-term Agent memory, background autonomous Agents, arbitrary shell execution, a plugin marketplace, cloud/SaaS architecture, billing, multi-user RBAC, mobile clients, an installer, an automatic updater, an automatic release pipeline, a major UI redesign, and new Provider families not required by a proven Beta defect.
+The following additions are explicitly allowed because they improve Beta operability without expanding governed Agent autonomy:
+
+- Read-only diagnostics API
+- Deterministic health/status API
+- Version/build identity API
+- Minimal diagnostics/status frontend UI
+- Launcher startup diagnostics
+- Bounded support-bundle functionality if justified
+
+Phase 13 excludes Phase 12 governed Runtime redesign, new Agent autonomy or capability features, new general-purpose product APIs unrelated to diagnostics or operability, multi-Agent orchestration, long-term Agent memory, background autonomous Agents, arbitrary shell execution, a plugin marketplace, cloud/SaaS architecture, billing, multi-user RBAC, mobile clients, an installer, an automatic updater, an automatic release pipeline, major frontend redesign, and new Provider families unless required by a proven Beta defect. Version bumps and release publication are also out of scope during initial Phase 13 implementation.
 
 ## 13. Security invariants
 
@@ -222,7 +231,7 @@ Run the full existing backend suite, full existing frontend suite, frontend prod
 
 ## 17. Branch and worktree strategy
 
-Phase 12 `main` is published and tagged. Phase 13 must not be developed directly on released `main`.
+The published Beta tag `v0.1.0-beta.1` points to `51fe068fd7ed48dee737afb8c8ecd7a52dcd467f` and remains immutable. The current approved design HEAD on `main` is `6fac7809121eeb2ab5dffe87c6b3cc16601c7618`. Phase 13 implementation must branch from `main` at the latest approved design HEAD, not directly from the old Beta tag, so the implementation branch includes this design specification.
 
 Recommended development branch:
 
@@ -232,7 +241,17 @@ Recommended isolated worktree:
 
 `D:\AgentProjects\AgentForge\.worktrees\phase-13-beta-hardening`
 
-At implementation time, use `superpowers:using-git-worktrees`, confirm `main` is clean, confirm tag `v0.1.0-beta.1`, verify `.worktrees` is ignored, create the branch from current `main`, and run clean baseline tests. No Phase 13 push or release is authorized by this design.
+At implementation time, use `superpowers:using-git-worktrees`, confirm `main` is clean, confirm tag `v0.1.0-beta.1`, verify `.worktrees` is ignored, create the branch from current `main`, and run clean baseline tests. Do not create the branch or worktree in this design run. Do not move or rewrite the published tag. Do not push this design revision unless HUMAN later authorizes it.
+
+### Implementation gate
+
+Phase 13 implementation may begin only after:
+
+1. This revised design is committed.
+2. The working tree is clean.
+3. HUMAN approves the revised design.
+4. Implementation starts in an isolated worktree.
+5. Clean baseline regressions pass.
 
 ## 18. Phase 13 exit criteria
 
