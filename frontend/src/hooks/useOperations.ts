@@ -50,6 +50,7 @@ export function useOperations() {
   const [live, setLive] = useState(false)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus>(demoProvider)
   const [testingProvider, setTestingProvider] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -105,17 +106,22 @@ export function useOperations() {
   }
 
   async function act(action: 'approve' | 'reject' | 'cancel', approvalId?: string) {
-    const item = approvalId ? approvals.find((candidate) => candidate.id === approvalId) : undefined
-    let effectiveApprovalId = item?.approval_id ?? approvalId
-    if (item && !effectiveApprovalId) {
-      const created = await api.createApproval(item.task_id, item.plan_id, item.plan_version)
-      effectiveApprovalId = created.id
+    setActionError(null)
+    try {
+      const item = approvalId ? approvals.find((candidate) => candidate.id === approvalId) : undefined
+      let effectiveApprovalId = item?.approval_id ?? (item ? undefined : approvalId)
+      if (item && !effectiveApprovalId) {
+        const created = await api.createApproval(item.task_id, item.plan_id, item.plan_version)
+        effectiveApprovalId = created.id
+      }
+      if (action === 'approve' && effectiveApprovalId) await api.approve(effectiveApprovalId)
+      if (action === 'reject' && effectiveApprovalId) await api.reject(effectiveApprovalId, 'Plan requires operator changes')
+      if (action === 'cancel' && selectedId) await api.cancel(selectedId)
+      await refresh()
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'The decision could not be completed.')
     }
-    if (action === 'approve' && effectiveApprovalId) await api.approve(effectiveApprovalId)
-    if (action === 'reject' && effectiveApprovalId) await api.reject(effectiveApprovalId, 'Plan requires operator changes')
-    if (action === 'cancel' && selectedId) await api.cancel(selectedId)
-    await refresh()
   }
 
-  return { tasks, approvals, projects, project, detail, report, selectedId, chooseTask, chooseProject, createProject, validateWorkspace, createTask, archiveProject, act, refresh, live, providerStatus, testingProvider, testProviderConnection }
+  return { tasks, approvals, projects, project, detail, report, selectedId, chooseTask, chooseProject, createProject, validateWorkspace, createTask, archiveProject, act, refresh, live, providerStatus, testingProvider, testProviderConnection, actionError }
 }

@@ -7,11 +7,12 @@ const permission = (snapshot: ResolvedExecutionSnapshot) => snapshot.capability_
 const risk = (snapshot: ResolvedExecutionSnapshot) => snapshot.capability_id === 'repository_state' ? 'low' : 'medium'
 const parameters = (snapshot: ResolvedExecutionSnapshot) => Object.entries(snapshot.normalized_parameters).map(([key, value]) => `${key}: ${value}`).join(', ') || 'none'
 
-export function Approvals({ approvals, onApprove, onReject, onCancel }: { approvals: ApprovalQueueItem[]; onApprove: (id: string) => void; onReject: (id: string) => void; onCancel: () => void }) {
+export function Approvals({ approvals, actionError, onApprove, onReject, onCancel }: { approvals: ApprovalQueueItem[]; actionError?: string | null; onApprove: (id: string) => void; onReject: (id: string) => void; onCancel: () => void }) {
   const selected = approvals[0]
   const snapshots = selected?.resolved_snapshot?.steps ?? []
   return <section className="page-stack">
     <div className="page-heading"><div><div className="eyebrow">HUMAN CONTROL POINT</div><h2>Approval Center</h2><p>Review exactly what the Agent will execute before it receives permission.</p></div><div className="approval-count"><span>{approvals.length}</span> pending</div></div>
+    {actionError && <div className="callout" role="alert"><AlertTriangle size={18} /><div><strong>Decision failed</strong><span>{actionError}</span></div></div>}
     {selected ? <div className="approval-layout">
       <div className="panel plan-panel">
         <div className="callout"><ShieldCheck size={22} /><div><strong>This is what the Agent will execute.</strong><span>Review the capability, resolved tool, normalized parameters, and registry binding.</span></div></div>

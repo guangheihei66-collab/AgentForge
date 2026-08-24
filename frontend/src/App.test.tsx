@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { api } from './api/client'
@@ -27,6 +27,29 @@ describe('AgentForge operations console', () => {
     expect(screen.getByText(/profile: smoke/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Registry fingerprint:/i).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument()
+  })
+
+  it('shows the approval error when the decision request is rejected', async () => {
+    render(<App />)
+    fireEvent.click((await screen.findAllByRole('button', { name: /Review approvals/i }))[0])
+    fireEvent.click(await screen.findByRole('button', { name: /Approve/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('backend unavailable')
+  })
+
+  it('completes approval for a waiting task without an approval record', async () => {
+    const fetchMock = approvalFlowFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/tasks/task-live/detail'))).toBe(true))
+    fireEvent.click((await screen.findAllByRole('button', { name: /Review approvals/i }))[0])
+    fireEvent.click(await screen.findByRole('button', { name: /Approve/i }))
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url, options]) => String(url).endsWith('/tasks/task-live/approval') && (options as RequestInit).method === 'POST')).toBe(true)
+      expect(fetchMock.mock.calls.some(([url, options]) => String(url).endsWith('/approvals/approval-live/approve') && (options as RequestInit).method === 'POST')).toBe(true)
+    })
   })
 
   it('shows safe LLM provider status without a secret editor', async () => {
@@ -129,4 +152,26 @@ function providerFetch(initial: Record<string, unknown>) {
 
 function jsonResponse(value: unknown) {
   return { ok: true, status: 200, json: async () => value } as Response
+}
+
+function approvalFlowFetch() {
+  const task = { id: 'task-live', project_id: 'project-live', title: 'Release v2.0 Verification', goal: 'Verify release', workspace: 'D:/AgentProjects/AgentForge', status: 'WAITING_APPROVAL', created_at: '2026-08-21T14:18:07Z', updated_at: '2026-08-21T14:32:01Z' }
+  const plan = { id: 'plan-live', version: 1, validation_status: 'VALID', created_at: task.created_at, plan_json: { schema_version: 2, steps: [], resolved_steps: [], project_authority: {} } }
+  const pending = { id: task.id, approval_id: null, task_id: task.id, task_title: task.title, plan_id: plan.id, plan_version: 1, decision: 'PENDING', requested_by: 'planner-agent', created_at: task.updated_at, plan_json: plan.plan_json, resolved_snapshot: { schema_version: 2, project_authority: {}, steps: [] } }
+  let approved = false
+  return vi.fn(async (input: string | URL | Request, request?: RequestInit) => {
+    const url = String(input)
+    if (url.endsWith('/tasks') && request?.method !== 'POST') return jsonResponse([{ ...task, status: approved ? 'RUNNING' : 'WAITING_APPROVAL' }])
+    if (url.endsWith('/approvals/pending')) return jsonResponse(approved ? [] : [pending])
+    if (url.endsWith('/projects')) return jsonResponse([])
+    if (url.endsWith('/llm/provider')) return jsonResponse({ provider: 'mock', configured: true, model: 'deterministic-mock', credential_configured: false, connection_status: 'not tested' })
+    if (url.endsWith('/tasks/task-live/detail')) return jsonResponse({ task, plans: [plan], approvals: [], executions: [], evidence: [], audit: [] })
+    if (url.endsWith('/tasks/task-live/report')) return jsonResponse({ task, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, evidence: [], audit_count: 0, execution_count: 0 })
+    if (url.endsWith('/tasks/task-live/approval') && request?.method === 'POST') return jsonResponse({ id: 'approval-live', task_id: task.id, plan_id: plan.id, plan_version: 1, decision: 'PENDING', approver: 'pending', created_at: task.updated_at })
+    if (url.endsWith('/approvals/approval-live/approve') && request?.method === 'POST') {
+      approved = true
+      return jsonResponse({ id: 'approval-live', task_id: task.id, plan_id: plan.id, plan_version: 1, decision: 'APPROVED', approver: 'operator', created_at: task.updated_at })
+    }
+    throw new Error(`Unexpected request: ${request?.method ?? 'GET'} ${url}`)
+  })
 }
