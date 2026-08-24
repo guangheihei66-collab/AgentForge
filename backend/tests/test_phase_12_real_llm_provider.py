@@ -274,6 +274,7 @@ def test_real_provider_sends_bounded_authenticated_structured_request():
     assert body["model"] == "example-model"
     assert body["max_tokens"] == 1200
     assert body["response_format"]["type"] == "json_schema"
+    assert body["thinking"] == {"type": "disabled"}
     assert "temperature" not in body
 
 
@@ -651,6 +652,16 @@ def test_prompt_rejects_oversized_context():
         build_planning_prompt(
             "Check release", build_default_capability_registry(), {"summary": "x" * 4097}
         )
+
+
+def test_planning_prompt_states_strict_contract_types():
+    prompt = build_planning_prompt(
+        "Check release", build_default_capability_registry(), {}
+    )
+
+    assert "schema_version must be the integer 2" in prompt
+    assert "step_id must be a non-empty string" in prompt
+    assert "steps must contain 1-20 objects" in prompt
 
 
 @pytest.mark.parametrize(

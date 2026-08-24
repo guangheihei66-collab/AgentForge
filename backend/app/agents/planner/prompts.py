@@ -46,6 +46,8 @@ def build_planning_prompt(
         "Create a minimal JSON capability plan for the user goal. Return only "
         "schema_version, a concise summary, and 1-20 steps containing only "
         "step_id, capability_id, and bounded parameters from the catalog. "
+        "schema_version must be the integer 2. steps must contain 1-20 objects. "
+        "step_id must be a non-empty string. "
         "Never select a concrete tool, command, permission, approval, workspace, "
         "executable path, or filesystem path. Do not provide hidden reasoning.\n"
         f"Capability catalog: {catalog_json}\n"
