@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 import json
 
 import httpx
@@ -257,6 +257,24 @@ def test_real_provider_sends_bounded_authenticated_structured_request():
     assert body["max_tokens"] == 1200
     assert body["response_format"]["type"] == "json_schema"
     assert "temperature" not in body
+
+
+def test_real_provider_sends_json_object_request_without_schema_fields():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return chat_response(valid_plan())
+
+    config = replace(real_config(), structured_output_mode=StructuredOutputMode.JSON_OBJECT)
+    provider = OpenAICompatibleProvider(
+        config, transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+
+    provider.generate_plan(plan_request())
+
+    response_format = captured["body"]["response_format"]
+    assert response_format == {"type": "json_object"}
 
 
 @pytest.mark.parametrize(

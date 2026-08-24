@@ -14,6 +14,7 @@ from .base import (
     LLMResponse,
     ProviderError,
     ProviderErrorCategory,
+    StructuredOutputMode,
 )
 from .config import ProviderConfig
 
@@ -91,6 +92,16 @@ class OpenAICompatibleProvider:
         schema_name: str,
         max_tokens: int,
     ) -> LLMResponse:
+        response_format: dict[str, Any] = {"type": "json_object"}
+        if self.config.structured_output_mode.value == StructuredOutputMode.JSON_SCHEMA.value:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "strict": True,
+                    "schema": dict(output_schema),
+                },
+            }
         request_payload = {
             "model": self.config.model,
             "messages": [
@@ -98,14 +109,7 @@ class OpenAICompatibleProvider:
                 {"role": "user", "content": prompt},
             ],
             "max_tokens": max_tokens,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": schema_name,
-                    "strict": True,
-                    "schema": dict(output_schema),
-                },
-            },
+            "response_format": response_format,
         }
         started = time.perf_counter()
         for attempt in range(1, 4):
