@@ -6,7 +6,11 @@ from typing import Any
 from .models import ToolDefinition
 from ..contracts.permissions import PermissionLevel
 from ..workspace.validator import WorkspaceValidator
-from ..metadata_manifest import METADATA_MANIFEST_FILES, normalize_metadata_relative_path
+from ..metadata_manifest import (
+    MAX_METADATA_READ_BYTES,
+    METADATA_MANIFEST_FILES,
+    normalize_metadata_relative_path,
+)
 
 
 class FileReadTool:
@@ -38,7 +42,7 @@ class FileReadTool:
         path = self.validator.validate_relative_file(workspace, relative_path)
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(relative_path)
-        if path.stat().st_size > 100_000:
+        if path.stat().st_size > MAX_METADATA_READ_BYTES:
             raise ValueError("Metadata file exceeds the read limit")
 
         content = path.read_text(encoding="utf-8", errors="replace")

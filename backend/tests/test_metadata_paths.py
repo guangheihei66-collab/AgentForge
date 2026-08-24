@@ -4,6 +4,8 @@ from app.capabilities.models import CapabilityRequest
 from app.capabilities.registry import build_default_capability_registry
 from app.capabilities.resolver import CapabilityResolutionError, CapabilityResolver
 from app.metadata_manifest import normalize_metadata_relative_path
+from app.metadata_manifest import MAX_METADATA_READ_BYTES, build_metadata_manifest
+from app.tools.file_read import FileReadTool
 from app.tools.defaults import build_default_registry
 from app.workspace.validator import WorkspaceValidator
 
@@ -58,3 +60,49 @@ def test_metadata_path_normalization_is_shared_and_bounded():
     assert normalize_metadata_relative_path(r"frontend\package.json") == "frontend/package.json"
     with pytest.raises(ValueError):
         normalize_metadata_relative_path("frontend/../package.json")
+
+
+def test_manifest_excludes_metadata_over_the_runtime_read_limit(db_session):
+    from tests.project_test_support import project_workspace
+
+    workspace = project_workspace(db_session)
+    frontend = __import__("pathlib").Path(workspace) / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (frontend / "package-lock.json").write_bytes(b"x" * 100_001)
+
+    manifest = build_metadata_manifest(workspace)
+
+    assert "frontend/package.json" in manifest
+    assert "frontend/package-lock.json" not in manifest
+
+
+@pytest.mark.parametrize("size, included", [(MAX_METADATA_READ_BYTES, True), (MAX_METADATA_READ_BYTES + 1, False)])
+def test_manifest_uses_runtime_read_limit_boundary(db_session, size, included):
+    from pathlib import Path
+    from tests.project_test_support import project_workspace
+
+    workspace = project_workspace(db_session)
+    frontend = Path(workspace) / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_bytes(b"x" * size)
+
+    manifest = build_metadata_manifest(workspace)
+
+    assert ("frontend/package.json" in manifest) is included
+
+
+def test_file_read_rechecks_size_after_manifest_snapshot(db_session):
+    from pathlib import Path
+    from tests.project_test_support import project_workspace
+
+    workspace = project_workspace(db_session)
+    path = Path(workspace) / "frontend" / "package.json"
+    path.parent.mkdir()
+    path.write_text("{}", encoding="utf-8")
+    assert "frontend/package.json" in build_metadata_manifest(workspace)
+    path.write_bytes(b"x" * (MAX_METADATA_READ_BYTES + 1))
+
+    tool = FileReadTool(WorkspaceValidator.for_project(workspace))
+    with pytest.raises(ValueError, match="exceeds the read limit"):
+        tool.execute("read_metadata", {"relative_path": "frontend/package.json"}, workspace)

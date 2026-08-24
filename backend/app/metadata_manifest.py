@@ -16,6 +16,7 @@ METADATA_MANIFEST_FILES = (
     "tsconfig.json",
 )
 METADATA_MANIFEST_ROOTS = ("", "backend", "frontend", "launcher")
+MAX_METADATA_READ_BYTES = 100_000
 
 
 def normalize_metadata_relative_path(value: str) -> str:
@@ -44,6 +45,6 @@ def build_metadata_manifest(workspace: str | Path) -> tuple[str, ...]:
                 path = validator.validate_relative_file(workspace, relative_path)
             except (OSError, ValueError):
                 continue
-            if path.is_file():
+            if path.is_file() and path.stat().st_size <= MAX_METADATA_READ_BYTES:
                 existing.append(relative_path)
     return tuple(existing)
