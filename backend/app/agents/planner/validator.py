@@ -12,6 +12,10 @@ from .schemas import PlanContract
 class PlanValidationError(ValueError):
     """Raised when a generated plan cannot be resolved or approved."""
 
+    def __init__(self, message: str, *, diagnostics: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.diagnostics = dict(diagnostics or {})
+
 
 class PlanValidator:
     FORBIDDEN_TERMS = {
@@ -28,16 +32,23 @@ class PlanValidator:
         try:
             plan = PlanContract.model_validate(payload)
         except ValidationError as exc:
-            raise PlanValidationError(str(exc)) from exc
+            raise PlanValidationError(
+                "Provider plan failed schema validation",
+                diagnostics=self._validation_diagnostics(exc),
+            ) from exc
         try:
             self.workspace_validator.validate_workspace(workspace)
         except ValueError as exc:
-            raise PlanValidationError(str(exc)) from exc
+            raise PlanValidationError(
+                str(exc),
+                diagnostics=self._simple_diagnostics("workspace_validation"),
+            ) from exc
         for step in plan.steps:
             lowered = json.dumps(step.parameters, ensure_ascii=False).lower()
             if any(term in lowered for term in self.FORBIDDEN_TERMS):
                 raise PlanValidationError(
-                    f"Forbidden parameter in capability: {step.capability_id}"
+                    f"Forbidden parameter in capability: {step.capability_id}",
+                    diagnostics=self._simple_diagnostics("forbidden_parameter"),
                 )
         return plan
 
@@ -47,7 +58,39 @@ class PlanValidator:
             try:
                 raw = json.loads(raw)
             except json.JSONDecodeError as exc:
-                raise PlanValidationError("Provider returned invalid JSON") from exc
+                raise PlanValidationError(
+                    "Provider returned invalid JSON",
+                    diagnostics=PlanValidator._simple_diagnostics("invalid_json"),
+                ) from exc
         if not isinstance(raw, dict):
-            raise PlanValidationError("Plan must be a JSON object")
+            raise PlanValidationError(
+                "Plan must be a JSON object",
+                diagnostics=PlanValidator._simple_diagnostics("object_required"),
+            )
         return raw
+
+    @staticmethod
+    def _simple_diagnostics(error_type: str) -> dict[str, Any]:
+        return {
+            "validation_error_count": 1,
+            "validation_error_paths": [],
+            "validation_error_types": [error_type[:80]],
+            "validation_summary_truncated": False,
+        }
+
+    @staticmethod
+    def _validation_diagnostics(exc: ValidationError) -> dict[str, Any]:
+        errors = exc.errors()
+        bounded = errors[:8]
+        return {
+            "validation_error_count": len(errors),
+            "validation_error_paths": [
+                ".".join(str(part) for part in error.get("loc", ()))[:120]
+                for error in bounded
+            ],
+            "validation_error_types": [
+                str(error.get("type", "validation_error"))[:80]
+                for error in bounded
+            ],
+            "validation_summary_truncated": len(errors) > len(bounded),
+        }

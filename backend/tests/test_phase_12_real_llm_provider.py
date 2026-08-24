@@ -687,6 +687,26 @@ def test_invalid_provider_plan_never_resolves(payload: dict):
         validator.validate(payload, REPO_ROOT)
 
 
+def test_plan_validation_error_exposes_only_bounded_schema_metadata():
+    validator = PlanValidator(WorkspaceValidator(REPO_ROOT))
+
+    with pytest.raises(PlanValidationError) as exc:
+        validator.validate(
+            {"schema_version": 2, "steps": [{"capability_id": "unknown"}]},
+            REPO_ROOT,
+        )
+
+    diagnostics = exc.value.diagnostics
+    assert diagnostics["validation_error_count"] == 2
+    assert diagnostics["validation_error_paths"] == [
+        "steps.0.step_id",
+        "steps.0.capability_id",
+    ]
+    assert diagnostics["validation_error_types"] == ["missing", "literal_error"]
+    assert diagnostics["validation_summary_truncated"] is False
+    assert "unknown" not in repr(diagnostics)
+
+
 def test_invalid_capability_parameters_fail_during_resolution(db_session):
     task = create_project_task(db_session,
         title="Invalid capability", goal="Check release"
@@ -792,6 +812,31 @@ def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
     assert failed_payload["provider_diagnostics"]["failure_stage"] == "upstream_http"
     serialized = json.dumps([event.payload_summary for event in events])
     assert SECRET not in serialized
+
+
+def test_plan_validation_failure_audits_bounded_validation_metadata(db_session):
+    task = create_project_task(
+        db_session, title="Validation diagnostics", goal="Check release"
+    )
+    provider = json_object_provider({"schema_version": 2, "steps": []})
+
+    with pytest.raises(PlanValidationError):
+        PlannerAgent(db_session, provider).create_plan(task.id)
+
+    failed_event = next(
+        event
+        for event in db_session.query(AuditEventRecord).filter_by(task_id=task.id).all()
+        if event.event_type == "LLM_PLAN_FAILED"
+    )
+    payload = json.loads(failed_event.payload_summary)
+    assert payload["validation_stage"] == "plan_validation"
+    assert payload["provider_diagnostics"] == {}
+    assert payload["validation_diagnostics"] == {
+        "validation_error_count": 1,
+        "validation_error_paths": ["steps"],
+        "validation_error_types": ["too_short"],
+        "validation_summary_truncated": False,
+    }
 
 
 def test_planning_api_uses_injected_provider_without_silent_fallback(db_session):
