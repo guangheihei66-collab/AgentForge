@@ -37,11 +37,17 @@ Runtime/Data Root:
 
 Before substantial changes verify:
 
-1. Repository root is exactly `D:\AgentProjects\AgentForge`.
-2. Git status.
-3. Current branch.
+1. The active Git worktree must be either the primary repository root
+   `D:\AgentProjects\AgentForge`, or a Git-registered linked worktree located
+   directly under `D:\AgentProjects\AgentForge\.worktrees\`.
+2. For a linked worktree, verify the exact path appears in
+   `git worktree list --porcelain` run from this repository. Git's registered
+   worktree metadata is the authority that it belongs to AgentForge; path
+   location alone is insufficient.
+3. Git status.
+4. Current branch.
 
-If the repository root is different, stop.
+If neither approved case is true, stop.
 
 ## Storage and Output Safety
 
@@ -52,9 +58,14 @@ If the repository root is different, stop.
 
 ## Workspace Boundary
 
-- The only valid AgentForge repository root is `D:\AgentProjects\AgentForge`.
+- The only valid AgentForge locations are the primary repository root
+  `D:\AgentProjects\AgentForge` and exact paths for Git-registered linked
+  worktrees directly under `D:\AgentProjects\AgentForge\.worktrees\`.
+- Unregistered copies, arbitrary directories containing `AgentForge` in their
+  name, and unrelated repositories remain forbidden.
 - Runtime and mutable data belong under `D:\AgentProjectData\AgentForge`.
-- Stop if the active repository root differs.
+- Stop if the active path is not an approved location, or if a linked worktree
+  is not present in `git worktree list --porcelain`.
 
 ## Repository Hygiene
 
