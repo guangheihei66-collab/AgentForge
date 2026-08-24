@@ -84,6 +84,7 @@ def _read_status(config: ProviderConfig) -> ProviderStatusRead:
         configured=config.configured,
         model=config.model or "deterministic-mock",
         credential_configured=config.credential_configured,
+        structured_output_mode=config.structured_output_mode.value,
         connection_status=status,
         failure_category=category,
     )

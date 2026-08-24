@@ -12,5 +12,6 @@ class ProviderStatusRead(BaseModel):
     configured: bool
     model: str
     credential_configured: bool
+    structured_output_mode: Literal["json_schema", "json_object"]
     connection_status: Literal["not tested", "success", "failed"]
     failure_category: ProviderErrorCategory | None = None

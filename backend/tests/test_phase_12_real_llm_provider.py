@@ -713,11 +713,43 @@ def test_provider_status_exposes_no_credential_material(monkeypatch):
         "configured": True,
         "model": "example-model",
         "credential_configured": True,
+        "structured_output_mode": "json_schema",
         "connection_status": "not tested",
         "failure_category": None,
     }
     assert SECRET not in response.text
     assert "base_url" not in response.text
+
+
+def test_provider_status_and_connection_use_json_object_mode(monkeypatch):
+    set_real_environment(monkeypatch)
+    monkeypatch.setenv("AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE", "json_object")
+    connection_state.reset()
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return chat_response({"status": "ok"})
+
+    config = replace(
+        real_config(), structured_output_mode=StructuredOutputMode.JSON_OBJECT
+    )
+    provider = OpenAICompatibleProvider(
+        config, transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+    app.dependency_overrides[get_status_provider] = lambda: provider
+    try:
+        with TestClient(app) as client:
+            status = client.get("/llm/provider")
+            connection = client.post("/llm/provider/test")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert status.json()["structured_output_mode"] == "json_object"
+    assert connection.status_code == 200
+    assert connection.json()["connection_status"] == "success"
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert SECRET not in status.text + connection.text
 
 
 def test_invalid_real_configuration_is_visible_without_mock_fallback(monkeypatch):
