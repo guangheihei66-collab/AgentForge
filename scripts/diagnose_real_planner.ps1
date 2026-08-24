@@ -26,7 +26,7 @@ try {
 }
 
 try {
-    $audit = @(Invoke-RestMethod -Method Get -Uri $auditUrl)
+    $audit = Invoke-RestMethod -Method Get -Uri $auditUrl
     $failed = $audit | Where-Object { $_.event_type -eq "LLM_PLAN_FAILED" } | Select-Object -Last 1
     if ($null -eq $failed) {
         Write-Output "LLM_PLAN_FAILED event: not found"
