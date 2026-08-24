@@ -33,6 +33,9 @@ AgentForge/
 - [x] Task Detail shows execution, evidence, and audit records.
 - [x] Report shows the synthetic PASS result.
 - [x] No database, `.env`, secret, log, or temporary artifact is tracked.
+- [x] Real-provider planning, grounded metadata, approval snapshots, Project authority, governed execution, Evidence, Audit, and controlled replanning are verified.
+- [x] Test result and report semantics distinguish SUCCESS, FAILED, and REJECTED.
+- [x] Release notes and operator configuration guidance are documented in `PHASE_12_RELEASE_NOTES.md` and `../deployment/OPERATOR_GUIDE.md`.
 
 ## Known demo boundary
 
