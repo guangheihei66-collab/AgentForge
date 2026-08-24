@@ -21,6 +21,7 @@ class TaskSummaryRead(BaseModel):
 
 class ApprovalQueueRead(BaseModel):
     id: str
+    approval_id: str | None = None
     task_id: str
     task_title: str
     plan_id: str

@@ -3,6 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from ...approvals.service import ApprovalError, ApprovalService
+from ...domain.states.task_state import TaskStatus
 from ...schemas.operations import (
     ApprovalQueueRead,
     ReportRead,
@@ -48,9 +50,10 @@ def pending_approvals(db: Session = Depends(get_db)) -> list[ApprovalQueueRead]:
         .order_by(ApprovalRecord.created_at.asc())
         .all()
     )
-    return [
+    queue = [
         ApprovalQueueRead(
             id=approval.id,
+            approval_id=approval.id,
             task_id=task.id,
             task_title=task.title,
             plan_id=plan.id,
@@ -63,6 +66,43 @@ def pending_approvals(db: Session = Depends(get_db)) -> list[ApprovalQueueRead]:
         )
         for approval, task, plan in rows
     ]
+
+    pending_task_ids = {approval.task_id for approval, _, _ in rows}
+    candidates = (
+        db.query(TaskRecord, PlanRecord)
+        .join(PlanRecord, PlanRecord.task_id == TaskRecord.id)
+        .join(ProjectRecord, ProjectRecord.id == TaskRecord.project_id)
+        .filter(TaskRecord.status == TaskStatus.WAITING_APPROVAL.value)
+        .filter(PlanRecord.validation_status == "VALID")
+        .filter(ProjectRecord.status == "ACTIVE")
+        .order_by(TaskRecord.created_at.asc(), PlanRecord.version.desc())
+        .all()
+    )
+    seen_task_ids: set[str] = set()
+    for task, plan in candidates:
+        if task.id in pending_task_ids or task.id in seen_task_ids:
+            continue
+        seen_task_ids.add(task.id)
+        try:
+            snapshot = ApprovalService(db)._snapshot_document(plan)
+        except ApprovalError:
+            continue
+        queue.append(
+            ApprovalQueueRead(
+                id=task.id,
+                approval_id=None,
+                task_id=task.id,
+                task_title=task.title,
+                plan_id=plan.id,
+                plan_version=plan.version,
+                decision="PENDING",
+                requested_by="planner",
+                created_at=plan.created_at,
+                plan_json=plan.plan_json,
+                resolved_snapshot=snapshot,
+            )
+        )
+    return queue
 
 
 @router.get("/tasks/{task_id}/detail", response_model=TaskDetailRead)

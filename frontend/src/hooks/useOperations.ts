@@ -105,8 +105,14 @@ export function useOperations() {
   }
 
   async function act(action: 'approve' | 'reject' | 'cancel', approvalId?: string) {
-    if (action === 'approve' && approvalId) await api.approve(approvalId)
-    if (action === 'reject' && approvalId) await api.reject(approvalId, 'Plan requires operator changes')
+    const item = approvalId ? approvals.find((candidate) => candidate.id === approvalId) : undefined
+    let effectiveApprovalId = item?.approval_id ?? approvalId
+    if (item && !effectiveApprovalId) {
+      const created = await api.createApproval(item.task_id, item.plan_id, item.plan_version)
+      effectiveApprovalId = created.id
+    }
+    if (action === 'approve' && effectiveApprovalId) await api.approve(effectiveApprovalId)
+    if (action === 'reject' && effectiveApprovalId) await api.reject(effectiveApprovalId, 'Plan requires operator changes')
     if (action === 'cancel' && selectedId) await api.cancel(selectedId)
     await refresh()
   }

@@ -454,6 +454,30 @@ def test_pending_approval_api_exposes_what_will_actually_execute(db_session):
     assert len(snapshot["registry_fingerprint"]) == 64
 
 
+def test_waiting_approval_task_without_request_is_visible_as_review_candidate(db_session):
+    with TestClient(app) as client:
+        project_id = project_fixture(db_session).id
+        task = client.post(
+            "/tasks",
+            json={
+                "title": "Waiting approval candidate",
+                "goal": "Keep the task visible until an operator decides",
+                "project_id": project_id,
+            },
+        ).json()
+        plan = client.post(f"/tasks/{task['id']}/plan", json={}).json()
+        pending = client.get("/approvals/pending")
+        detail = client.get(f"/tasks/{task['id']}/detail")
+
+    assert pending.status_code == 200
+    item = next(row for row in pending.json() if row["task_id"] == task["id"])
+    assert item["id"] == task["id"]
+    assert item["approval_id"] is None
+    assert item["plan_id"] == plan["id"]
+    assert item["decision"] == "PENDING"
+    assert detail.json()["approvals"] == []
+
+
 def runtime_for(session, resolver=None):
     workspace_validator = WorkspaceValidator(project_workspace(session))
     gateway = ToolGateway(
