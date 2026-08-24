@@ -8,7 +8,7 @@ import pytest
 
 from app.main import app
 from app.storage.database import SessionLocal
-from app.storage.orm import AuditEventRecord
+from app.storage.orm import AuditEventRecord, ToolExecutionRecord
 
 
 @pytest.fixture()
@@ -164,6 +164,53 @@ def test_operations_read_endpoints_expose_console_data(api_project_path):
     assert pending.json()[0]["task_id"] == task_id
     assert detail.json()["task"]["id"] == task_id
     assert report.json()["readiness"] == "PENDING"
+
+
+def test_report_truthfully_counts_rejected_executions(api_project_path):
+    with TestClient(app) as client:
+        project_id = create_api_project(client, api_project_path)
+        task = client.post(
+            "/tasks",
+            json={"title": "Report status task", "goal": "Verify counts", "project_id": project_id},
+        ).json()
+        with SessionLocal() as session:
+            for status in ["SUCCESS"] * 6 + ["REJECTED"]:
+                session.add(ToolExecutionRecord(task_id=task["id"], tool_name="fixture", action="read", status=status))
+            session.commit()
+        report = client.get(f"/tasks/{task['id']}/report")
+
+    assert report.status_code == 200
+    body = report.json()
+    assert body["execution_count"] == 7
+    assert body["completed_steps"] == 6
+    assert body["failed_steps"] == 0
+    assert body["rejected_steps"] == 1
+    assert "6 successful" in body["summary"]
+    assert "1 rejected" in body["summary"]
+
+
+def test_report_status_matrix_preserves_execution_categories(api_project_path):
+    cases = [
+        (["SUCCESS"] * 6, (6, 0, 0)),
+        (["SUCCESS"] * 5 + ["FAILED"], (5, 1, 0)),
+        (["SUCCESS"] * 5 + ["REJECTED"], (5, 0, 1)),
+        (["SUCCESS"] * 4 + ["FAILED", "REJECTED"], (4, 1, 1)),
+        ([], (0, 0, 0)),
+    ]
+    with TestClient(app) as client:
+        project_id = create_api_project(client, api_project_path)
+        for statuses, expected in cases:
+            task = client.post(
+                "/tasks",
+                json={"title": "Report matrix task", "goal": "Verify counts", "project_id": project_id},
+            ).json()
+            with SessionLocal() as session:
+                for status in statuses:
+                    session.add(ToolExecutionRecord(task_id=task["id"], tool_name="fixture", action="read", status=status))
+                session.commit()
+            body = client.get(f"/tasks/{task['id']}/report").json()
+
+            assert (body["completed_steps"], body["failed_steps"], body["rejected_steps"]) == expected
 
 
 def test_execute_endpoint_runs_only_an_approved_plan(api_project_path):

@@ -131,13 +131,15 @@ def task_report(task_id: str, db: Session = Depends(get_db)) -> ReportRead:
     audit_count = db.query(AuditEventRecord).filter_by(task_id=task_id).count()
     completed = sum(1 for item in executions if item.status == "SUCCESS")
     failed = sum(1 for item in executions if item.status == "FAILED")
+    rejected = sum(1 for item in executions if item.status == "REJECTED")
     readiness = "PASS" if task.status == "SUCCESS" and failed == 0 else "FAIL" if task.status == "FAILED" or failed else "PENDING"
     return ReportRead(
         task=TaskSummaryRead.model_validate(task),
         readiness=readiness,
-        summary=f"{completed} tool execution(s) completed; {failed} failed.",
+        summary=f"{completed} successful; {failed} failed; {rejected} rejected.",
         completed_steps=completed,
         failed_steps=failed,
+        rejected_steps=rejected,
         evidence=[{"id": e.id, "summary": e.summary, "artifact_path": e.artifact_path, "content_hash": e.content_hash, "created_at": e.created_at} for e in evidence],
         audit_count=audit_count,
         execution_count=len(executions),

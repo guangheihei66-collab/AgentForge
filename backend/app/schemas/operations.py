@@ -48,6 +48,7 @@ class ReportRead(BaseModel):
     summary: str
     completed_steps: int
     failed_steps: int
+    rejected_steps: int
     evidence: list[dict[str, Any]]
     audit_count: int
     execution_count: int
