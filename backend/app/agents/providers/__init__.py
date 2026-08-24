@@ -6,6 +6,7 @@ from .base import (
     LLMResponse,
     ProviderError,
     ProviderErrorCategory,
+    StructuredOutputMode,
 )
 from .config import ProviderConfig, build_provider, load_provider_config
 from .mock import MockLLMProvider
@@ -20,6 +21,7 @@ __all__ = [
     "ProviderConfig",
     "ProviderError",
     "ProviderErrorCategory",
+    "StructuredOutputMode",
     "build_provider",
     "load_provider_config",
 ]

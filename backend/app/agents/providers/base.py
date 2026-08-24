@@ -5,6 +5,11 @@ from enum import StrEnum
 from typing import Any, Mapping, Protocol
 
 
+class StructuredOutputMode(StrEnum):
+    JSON_SCHEMA = "json_schema"
+    JSON_OBJECT = "json_object"
+
+
 class ProviderErrorCategory(StrEnum):
     NOT_CONFIGURED = "NOT_CONFIGURED"
     AUTHENTICATION_FAILED = "AUTHENTICATION_FAILED"

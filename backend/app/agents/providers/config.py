@@ -7,7 +7,12 @@ import time
 from typing import Any
 from urllib.parse import urlsplit
 
-from .base import LLMProvider, ProviderError, ProviderErrorCategory
+from .base import (
+    LLMProvider,
+    ProviderError,
+    ProviderErrorCategory,
+    StructuredOutputMode,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,11 +23,12 @@ class ProviderConfig:
     api_key: str = field(default="", repr=False)
     timeout_seconds: float = 30.0
     max_output_tokens: int = 1200
+    structured_output_mode: StructuredOutputMode = StructuredOutputMode.JSON_SCHEMA
     validation_error: str | None = field(default=None, repr=False)
 
     @property
     def configured(self) -> bool:
-        return self.provider == "mock" or self.validation_error is None
+        return self.validation_error is None
 
     @property
     def credential_configured(self) -> bool:
@@ -87,12 +93,20 @@ def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderCo
     tokens, token_error = _integer(
         values, "AGENTFORGE_LLM_MAX_OUTPUT_TOKENS", "1200", 1, 4096
     )
+    raw_mode = values.get("AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE", "json_schema").strip().lower()
+    try:
+        structured_output_mode = StructuredOutputMode(raw_mode or "json_schema")
+        mode_error = None
+    except ValueError:
+        structured_output_mode = StructuredOutputMode.JSON_SCHEMA
+        mode_error = "Structured output mode is invalid"
     if provider == "mock":
-        error = timeout_error or token_error
+        error = timeout_error or token_error or mode_error
         return ProviderConfig(
             provider=provider,
             timeout_seconds=timeout,
             max_output_tokens=tokens,
+            structured_output_mode=structured_output_mode,
             validation_error=error,
         )
     raw_url = values.get("AGENTFORGE_LLM_BASE_URL", "").strip()
@@ -102,6 +116,7 @@ def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderCo
     error = (
         timeout_error
         or token_error
+        or mode_error
         or url_error
         or ("Model is required" if not model else None)
         or ("API key is required" if not api_key else None)
@@ -113,6 +128,7 @@ def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderCo
         api_key=api_key,
         timeout_seconds=timeout,
         max_output_tokens=tokens,
+        structured_output_mode=structured_output_mode,
         validation_error=error,
     )
 

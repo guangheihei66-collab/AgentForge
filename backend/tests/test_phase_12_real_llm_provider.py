@@ -18,6 +18,7 @@ from app.agents.providers import (
     MockLLMProvider,
     ProviderError,
     ProviderErrorCategory,
+    StructuredOutputMode,
     build_provider,
     load_provider_config,
 )
@@ -60,10 +61,31 @@ def test_default_configuration_selects_mock():
     config = load_provider_config({})
 
     assert config.provider == "mock"
+    assert config.structured_output_mode is StructuredOutputMode.JSON_SCHEMA
     assert config.timeout_seconds == 30.0
     assert config.max_output_tokens == 1200
     assert config.configured is True
     assert config.credential_configured is False
+
+
+@pytest.mark.parametrize("mode", ["json_schema", "json_object"])
+def test_structured_output_mode_is_explicit_and_closed(mode):
+    config = load_provider_config({**real_env(), "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE": mode})
+
+    assert config.structured_output_mode.value == mode
+
+
+def test_unknown_structured_output_mode_fails_closed_without_secret():
+    config = load_provider_config(
+        {**real_env(), "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE": "typo"}
+    )
+
+    assert config.configured is False
+    assert SECRET not in repr(config)
+    with pytest.raises(ProviderError) as exc:
+        build_provider(config)
+    assert exc.value.category == ProviderErrorCategory.NOT_CONFIGURED
+    assert "typo" not in str(exc.value)
 
 
 def test_real_configuration_is_immutable_and_redacted():
