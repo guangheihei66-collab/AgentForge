@@ -6,11 +6,18 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-os.environ.setdefault("AGENTFORGE_DATABASE_URL", "sqlite+pysqlite:///:memory:")
+# Tests must not inherit a live database URL from the invoking environment.
+os.environ["AGENTFORGE_DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 
 import pytest
 
-from app.storage.database import Base, SessionLocal, engine, init_db
+from app.storage.database import Base, SessionLocal, database_url, engine, init_db
+
+if database_url() != "sqlite+pysqlite:///:memory:" or engine.url.database != ":memory:":
+    raise RuntimeError(
+        f"AgentForge tests require an in-memory SQLite database; "
+        f"url={database_url()!r}, engine_url={engine.url!r}"
+    )
 
 
 @pytest.fixture()
