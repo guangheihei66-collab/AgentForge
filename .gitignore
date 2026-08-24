@@ -8,6 +8,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+launcher/.env.local
 
 # Frontend and tooling
 node_modules/

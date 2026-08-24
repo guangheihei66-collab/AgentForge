@@ -1,0 +1,7 @@
+# Copy this file to .env.local for local development.
+# Never put AGENTFORGE_LLM_API_KEY in this file.
+AGENTFORGE_PYTHON=D:\AgentProjects\AgentForge\backend\.venv\Scripts\python.exe
+AGENTFORGE_LLM_PROVIDER=openai-compatible
+AGENTFORGE_LLM_BASE_URL=https://api.deepseek.com
+AGENTFORGE_LLM_MODEL=deepseek-v4-flash
+AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE=json_object
