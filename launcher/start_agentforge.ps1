@@ -97,6 +97,12 @@ function Test-HttpHealth {
   } catch { return $false }
 }
 
+function Get-Diagnostics {
+  try {
+    return Invoke-RestMethod "http://127.0.0.1:8000/diagnostics" -TimeoutSec 3
+  } catch { return $null }
+}
+
 function Test-Port([int]$port) {
   try {
     $connection = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $port -State Listen -ErrorAction Stop
@@ -192,6 +198,16 @@ try {
     Write-LauncherLog "Port 5173 is already available; no duplicate frontend process started."
   }
   Wait-Until { Test-Port 5173 } 30 "Frontend port check"
+
+  $diagnostics = Get-Diagnostics
+  if ($diagnostics) {
+    Write-LauncherLog "Backend: $($diagnostics.health.backend); Database: $($diagnostics.health.database); Provider: $($diagnostics.health.provider)"
+    Write-LauncherLog "AgentForge version: $($diagnostics.identity.version); revision: $(if ($diagnostics.identity.revision) { $diagnostics.identity.revision } else { 'UNKNOWN' })"
+    if ($diagnostics.health.overall -eq "UNHEALTHY") { Fail "Diagnostics reported unhealthy runtime state." }
+    if ($diagnostics.health.overall -eq "DEGRADED") { Write-LauncherLog "AgentForge is ready with degraded dependencies." }
+  } else {
+    Fail "Diagnostics endpoint did not become available."
+  }
 
   Start-Process "http://localhost:5173"
   Write-LauncherLog "AgentForge is ready: http://localhost:5173"
