@@ -603,6 +603,37 @@ def test_provider_plan_is_validated_resolved_and_safely_audited(db_session):
     assert db_session.query(ToolExecutionRecord).filter_by(task_id=task.id).count() == 0
 
 
+def json_object_provider(payload: dict) -> OpenAICompatibleProvider:
+    config = replace(
+        real_config(), structured_output_mode=StructuredOutputMode.JSON_OBJECT
+    )
+    return OpenAICompatibleProvider(
+        config,
+        transport=httpx.MockTransport(lambda _: chat_response(payload)),
+        sleeper=lambda _: None,
+    )
+
+
+def test_json_object_plan_uses_existing_planner_contract_validation(db_session):
+    task = create_project_task(db_session, title="JSON object plan", goal="Check release")
+
+    plan = PlannerAgent(db_session, json_object_provider(valid_plan())).create_plan(task.id)
+
+    assert plan.plan_json["schema_version"] == 2
+    assert TaskService(db_session).get_task(task.id).status == TaskStatus.WAITING_APPROVAL
+
+
+def test_invalid_json_object_plan_is_rejected_before_persistence(db_session):
+    task = create_project_task(db_session, title="Invalid JSON object plan", goal="Check release")
+    invalid = {"schema_version": 2, "summary": "invalid", "steps": []}
+
+    with pytest.raises(PlanValidationError):
+        PlannerAgent(db_session, json_object_provider(invalid)).create_plan(task.id)
+
+    assert TaskService(db_session).get_task(task.id).status == TaskStatus.FAILED
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 0
+
+
 def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
     task = create_project_task(db_session,
         title="Phase 12 failure", goal="Check release"
