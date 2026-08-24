@@ -174,6 +174,7 @@ class PlannerAgent:
                     "validation_stage": stage,
                     "attempt_count": getattr(exc, "attempt_count", 1),
                     "duration_ms": getattr(exc, "duration_ms", 0),
+                    "provider_diagnostics": getattr(exc, "diagnostics", {}),
                 },
             )
             self.tasks.transition_task(

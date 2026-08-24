@@ -115,7 +115,7 @@ class OpenAICompatibleProvider:
         for attempt in range(1, 4):
             try:
                 body, retry_after = self._send_once(request_payload)
-                payload, input_tokens, output_tokens = self._extract(body)
+                payload, input_tokens, output_tokens, diagnostics = self._extract(body)
                 return LLMResponse(
                     payload=payload,
                     provider="openai-compatible",
@@ -124,6 +124,7 @@ class OpenAICompatibleProvider:
                     attempt_count=attempt,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    diagnostics=diagnostics,
                 )
             except ProviderError as exc:
                 error = exc
@@ -149,6 +150,7 @@ class OpenAICompatibleProvider:
                     safe_message=error.safe_message,
                     attempt_count=attempt,
                     duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                    diagnostics=error.diagnostics,
                 ) from None
             delay = retry_after if retry_after is not None else RETRY_DELAYS[attempt - 1]
             self.sleeper(delay)
@@ -187,33 +189,42 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _status_error(status: int, retry_after_value: str | None) -> ProviderError:
+        diagnostics = {
+            "upstream_http_status": status,
+            "failure_stage": "upstream_http",
+        }
         if status in {401, 403}:
             return ProviderError(
                 ProviderErrorCategory.AUTHENTICATION_FAILED,
                 safe_message="LLM provider authentication failed",
+                diagnostics=diagnostics,
             )
         if status == 408:
             error = ProviderError(
                 ProviderErrorCategory.TIMEOUT,
                 retryable=True,
                 safe_message="LLM provider timed out",
+                diagnostics=diagnostics,
             )
         elif status == 429:
             error = ProviderError(
                 ProviderErrorCategory.RATE_LIMITED,
                 retryable=True,
                 safe_message="LLM provider rate limited the request",
+                diagnostics=diagnostics,
             )
         elif 500 <= status < 600:
             error = ProviderError(
                 ProviderErrorCategory.UPSTREAM_SERVER_ERROR,
                 retryable=True,
                 safe_message="LLM provider server failed",
+                diagnostics=diagnostics,
             )
         else:
             return ProviderError(
                 ProviderErrorCategory.INVALID_RESPONSE,
                 safe_message="LLM provider returned an invalid HTTP response",
+                diagnostics=diagnostics,
             )
         error.retry_after = OpenAICompatibleProvider._retry_after(retry_after_value)
         return error
@@ -237,25 +248,81 @@ class OpenAICompatibleProvider:
         return min(seconds, 5.0)
 
     @staticmethod
-    def _extract(body: bytes) -> tuple[dict[str, Any], int | None, int | None]:
+    def _extract(
+        body: bytes, *, upstream_http_status: int = 200
+    ) -> tuple[dict[str, Any], int | None, int | None, dict[str, Any]]:
+        diagnostics: dict[str, Any] = {
+            "upstream_http_status": upstream_http_status,
+            "finish_reason": None,
+            "content_present": False,
+            "content_length": 0,
+            "envelope_json_valid": False,
+            "choices_present": False,
+            "message_present": False,
+            "content_json_valid": False,
+            "content_json_object": False,
+            "reasoning_content_present": False,
+            "failure_stage": "envelope_json_parse",
+        }
         try:
             envelope = json.loads(body)
-            choices = envelope["choices"]
-            content = choices[0]["message"]["content"]
-            payload = json.loads(content) if isinstance(content, str) else content
-            if not isinstance(payload, dict):
-                raise TypeError
-        except (json.JSONDecodeError, UnicodeDecodeError, KeyError, IndexError, TypeError):
-            raise ProviderError(
-                ProviderErrorCategory.INVALID_RESPONSE,
-                safe_message="LLM provider returned invalid structured data",
-            ) from None
+            diagnostics["envelope_json_valid"] = True
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        if not isinstance(envelope, dict):
+            diagnostics["failure_stage"] = "response_envelope"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        choices = envelope.get("choices")
+        if not isinstance(choices, list) or not choices:
+            diagnostics["failure_stage"] = "choices"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        diagnostics["choices_present"] = True
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            diagnostics["failure_stage"] = "choices"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        finish_reason = choice.get("finish_reason")
+        if isinstance(finish_reason, str):
+            diagnostics["finish_reason"] = finish_reason
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            diagnostics["failure_stage"] = "message"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        diagnostics["message_present"] = True
+        diagnostics["reasoning_content_present"] = "reasoning_content" in message
+        if "content" not in message:
+            diagnostics["failure_stage"] = "content"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        content = message["content"]
+        if isinstance(content, str):
+            diagnostics["content_present"] = bool(content)
+            diagnostics["content_length"] = len(content)
+        else:
+            diagnostics["content_present"] = content is not None
+        if not diagnostics["content_present"]:
+            diagnostics["failure_stage"] = "content_empty"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        if not isinstance(content, str):
+            diagnostics["failure_stage"] = "content_type"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        try:
+            payload = json.loads(content)
+            diagnostics["content_json_valid"] = True
+        except json.JSONDecodeError:
+            diagnostics["failure_stage"] = "content_json_parse"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        if not isinstance(payload, dict):
+            diagnostics["failure_stage"] = "content_not_object"
+            raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE, diagnostics=diagnostics) from None
+        diagnostics["content_json_object"] = True
+        diagnostics["failure_stage"] = None
         usage = envelope.get("usage")
         usage = usage if isinstance(usage, dict) else {}
         return (
             payload,
             OpenAICompatibleProvider._token_count(usage.get("prompt_tokens")),
             OpenAICompatibleProvider._token_count(usage.get("completion_tokens")),
+            diagnostics,
         )
 
     @staticmethod

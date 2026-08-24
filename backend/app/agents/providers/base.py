@@ -1,6 +1,6 @@
 """Typed, execution-free provider boundary for plan generation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Mapping, Protocol
 
@@ -43,6 +43,7 @@ class ProviderError(RuntimeError):
         safe_message: str = "LLM provider request failed",
         attempt_count: int = 1,
         duration_ms: int = 0,
+        diagnostics: Mapping[str, Any] | None = None,
     ) -> None:
         del safe_message  # Caller or upstream text must never be retained.
         public_message = self._SAFE_MESSAGES[category]
@@ -52,6 +53,7 @@ class ProviderError(RuntimeError):
         self.safe_message = public_message
         self.attempt_count = attempt_count
         self.duration_ms = duration_ms
+        self.diagnostics = dict(diagnostics or {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +72,7 @@ class LLMResponse:
     attempt_count: int
     input_tokens: int | None = None
     output_tokens: int | None = None
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
 
 class LLMProvider(Protocol):

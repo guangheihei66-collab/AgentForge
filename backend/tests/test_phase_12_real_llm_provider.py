@@ -233,6 +233,24 @@ def chat_response(content: dict, *, usage: dict | None = None) -> httpx.Response
     )
 
 
+def raw_chat_response(
+    content: object,
+    *,
+    finish_reason: str | None = "stop",
+    reasoning_content: object = None,
+) -> httpx.Response:
+    message = {"content": content}
+    if reasoning_content is not None:
+        message["reasoning_content"] = reasoning_content
+    return httpx.Response(
+        200,
+        json={
+            "choices": [{"message": message, "finish_reason": finish_reason}],
+            "usage": {},
+        },
+    )
+
+
 def test_real_provider_sends_bounded_authenticated_structured_request():
     captured = {}
 
@@ -402,6 +420,112 @@ def test_malformed_success_response_is_rejected_without_retry(response):
 
     assert calls == 1
     assert exc.value.category == ProviderErrorCategory.INVALID_RESPONSE
+
+
+def test_provider_diagnostics_capture_safe_success_metadata_only():
+    content = json.dumps(valid_plan())
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(
+            lambda _: raw_chat_response(content, reasoning_content=SECRET)
+        ),
+        sleeper=lambda _: None,
+    )
+
+    response = provider.generate_plan(plan_request())
+
+    diagnostics = response.diagnostics
+    assert diagnostics["upstream_http_status"] == 200
+    assert diagnostics["finish_reason"] == "stop"
+    assert diagnostics["content_present"] is True
+    assert diagnostics["content_length"] == len(content)
+    assert diagnostics["envelope_json_valid"] is True
+    assert diagnostics["choices_present"] is True
+    assert diagnostics["message_present"] is True
+    assert diagnostics["content_json_valid"] is True
+    assert diagnostics["content_json_object"] is True
+    assert diagnostics["reasoning_content_present"] is True
+    assert diagnostics["failure_stage"] is None
+    assert SECRET not in repr(diagnostics)
+    assert "prompt" not in repr(diagnostics).lower()
+    assert "authorization" not in repr(diagnostics).lower()
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+            {
+                "finish_reason": "length",
+                "content_present": False,
+                "content_length": 0,
+                "content_json_valid": False,
+                "failure_stage": "content_empty",
+            },
+        ),
+        (
+            {"choices": [{"message": {"content": "{\"partial\":"}, "finish_reason": "length"}]},
+            {
+                "finish_reason": "length",
+                "content_present": True,
+                "content_json_valid": False,
+                "content_json_object": False,
+                "failure_stage": "content_json_parse",
+            },
+        ),
+        (
+            {"choices": [{"message": {"content": "not-json"}, "finish_reason": "stop"}]},
+            {
+                "finish_reason": "stop",
+                "content_present": True,
+                "content_json_valid": False,
+                "failure_stage": "content_json_parse",
+            },
+        ),
+        ({"choices": []}, {"choices_present": False, "failure_stage": "choices"}),
+        (
+            {"choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]},
+            {
+                "content_json_valid": True,
+                "content_json_object": False,
+                "failure_stage": "content_not_object",
+            },
+        ),
+    ],
+)
+def test_provider_diagnostics_classify_safe_failure_shapes(body, expected):
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body)),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.generate_plan(plan_request())
+
+    diagnostics = exc.value.diagnostics
+    assert diagnostics["upstream_http_status"] == 200
+    for key, value in expected.items():
+        assert diagnostics[key] == value
+    assert SECRET not in repr(diagnostics)
+
+
+def test_provider_diagnostics_reject_malformed_envelope_without_raw_data():
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b"not-json")),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.generate_plan(plan_request())
+
+    diagnostics = exc.value.diagnostics
+    assert diagnostics["upstream_http_status"] == 200
+    assert diagnostics["envelope_json_valid"] is False
+    assert diagnostics["failure_stage"] == "envelope_json_parse"
+    assert SECRET not in repr(diagnostics)
 
 
 @pytest.mark.parametrize("content", ["not-json", "[]"])
@@ -647,6 +771,11 @@ def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
             safe_message="Provider timed out",
             attempt_count=3,
             duration_ms=1234,
+            diagnostics={
+                "upstream_http_status": 504,
+                "failure_stage": "upstream_http",
+                "content_length": 0,
+            },
         )
     )
 
@@ -657,7 +786,12 @@ def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
     assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 0
     events = db_session.query(AuditEventRecord).filter_by(task_id=task.id).all()
     assert "LLM_PLAN_FAILED" in {event.event_type for event in events}
-    assert SECRET not in json.dumps([event.payload_summary for event in events])
+    failed_event = next(event for event in events if event.event_type == "LLM_PLAN_FAILED")
+    failed_payload = json.loads(failed_event.payload_summary)
+    assert failed_payload["provider_diagnostics"]["upstream_http_status"] == 504
+    assert failed_payload["provider_diagnostics"]["failure_stage"] == "upstream_http"
+    serialized = json.dumps([event.payload_summary for event in events])
+    assert SECRET not in serialized
 
 
 def test_planning_api_uses_injected_provider_without_silent_fallback(db_session):
