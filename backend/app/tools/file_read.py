@@ -1,13 +1,12 @@
 """Read-only project metadata tool."""
 
 import hashlib
-from pathlib import Path
 from typing import Any
 
 from .models import ToolDefinition
 from ..contracts.permissions import PermissionLevel
 from ..workspace.validator import WorkspaceValidator
-from ..metadata_manifest import METADATA_MANIFEST_FILES
+from ..metadata_manifest import METADATA_MANIFEST_FILES, normalize_metadata_relative_path
 
 
 class FileReadTool:
@@ -31,8 +30,10 @@ class FileReadTool:
         relative_path = parameters.get("relative_path")
         if not isinstance(relative_path, str):
             raise ValueError("relative_path is required")
-        if Path(relative_path).name not in self.ALLOWED_FILES:
-            raise PermissionError("File is not an allowed metadata file")
+        try:
+            relative_path = normalize_metadata_relative_path(relative_path)
+        except ValueError as exc:
+            raise PermissionError(str(exc)) from exc
 
         path = self.validator.validate_relative_file(workspace, relative_path)
         if not path.exists() or not path.is_file():

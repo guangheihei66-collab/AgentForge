@@ -61,16 +61,7 @@ def build_default_capability_registry() -> CapabilityRegistry:
                 ParameterFieldDefinition(
                     name="relative_path",
                     required=True,
-                    allowed_values=(
-                        "AGENTS.md",
-                        "PROJECT_CONTEXT.md",
-                        "README.md",
-                        "package-lock.json",
-                        "package.json",
-                        "pyproject.toml",
-                        "requirements.txt",
-                        "tsconfig.json",
-                    ),
+                    allowed_values=(),
                 ),
             ),
         )

@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from ..tools.models import ToolDefinition
 from ..tools.registry import ToolRegistry
+from ..metadata_manifest import normalize_metadata_relative_path
 from .models import (
     CapabilityDefinition,
     CapabilityRequest,
@@ -151,6 +152,12 @@ class CapabilityResolver:
                     raise CapabilityResolutionError(
                         f"Capability parameter is required: {name}"
                     )
+                continue
+            if capability.id == "project_metadata" and name == "relative_path":
+                try:
+                    normalized[name] = normalize_metadata_relative_path(value)
+                except ValueError as exc:
+                    raise CapabilityResolutionError(str(exc)) from exc
                 continue
             if not isinstance(value, str) or value not in field.allowed_values:
                 raise CapabilityResolutionError(
