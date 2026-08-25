@@ -143,7 +143,7 @@ class StartupPoller:
     def start(self, worker: Callable[[], None]) -> None:
         self._startup_pending = True
         worker()
-        self.schedule(self.tick, self.delay_ms)
+        self.schedule(self.delay_ms, self.tick)
 
     def complete(self) -> None:
         self._startup_pending = False
@@ -152,7 +152,7 @@ class StartupPoller:
         self.update()
         starting = self.controller.backend.state is ServiceState.STARTING or self.controller.frontend.state is ServiceState.STARTING
         if self._startup_pending or starting:
-            self.schedule(self.tick, self.delay_ms)
+            self.schedule(self.delay_ms, self.tick)
             return
         if self.controller.can_open and not self._opened:
             self._opened = True

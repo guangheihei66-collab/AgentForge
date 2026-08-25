@@ -106,7 +106,12 @@ def test_startup_poller_survives_first_tick_before_worker_state_transition():
     updates = []
     opened = []
     worker_started = []
-    poller = StartupPoller(controller, lambda callback, delay: scheduled.append((callback, delay)), lambda: updates.append(True), lambda: opened.append(True))
+    def tkinter_after(delay, callback):
+        assert isinstance(delay, int)
+        assert callable(callback)
+        scheduled.append((delay, callback))
+
+    poller = StartupPoller(controller, tkinter_after, lambda: updates.append(True), lambda: opened.append(True))
 
     poller.start(lambda: worker_started.append(True))
     assert controller.backend.state is ServiceState.STOPPED
@@ -123,3 +128,19 @@ def test_startup_poller_survives_first_tick_before_worker_state_transition():
 
     assert worker_started == [True]
     assert opened == [True]
+
+
+def test_startup_poller_uses_tk_after_argument_order_for_start_and_reschedule():
+    controller = LauncherController(session=FakeSession(), port_in_use=lambda _port: False)
+    scheduled = []
+
+    def tkinter_after(delay, callback):
+        assert isinstance(delay, int)
+        assert callable(callback)
+        scheduled.append((delay, callback))
+
+    poller = StartupPoller(controller, tkinter_after, lambda: None, lambda: None)
+    poller.start(lambda: None)
+    poller.tick()
+
+    assert len(scheduled) == 2
