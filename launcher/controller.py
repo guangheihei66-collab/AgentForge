@@ -128,6 +128,37 @@ class LauncherController:
         self._stopped = True
 
 
+class StartupPoller:
+    """Observe one startup operation from the Tk thread until it completes."""
+
+    def __init__(self, controller: LauncherController, schedule: Callable, update: Callable[[], None], open_browser: Callable[[], None], delay_ms: int = 100):
+        self.controller = controller
+        self.schedule = schedule
+        self.update = update
+        self.open_browser = open_browser
+        self.delay_ms = delay_ms
+        self._startup_pending = False
+        self._opened = False
+
+    def start(self, worker: Callable[[], None]) -> None:
+        self._startup_pending = True
+        worker()
+        self.schedule(self.tick, self.delay_ms)
+
+    def complete(self) -> None:
+        self._startup_pending = False
+
+    def tick(self) -> None:
+        self.update()
+        starting = self.controller.backend.state is ServiceState.STARTING or self.controller.frontend.state is ServiceState.STARTING
+        if self._startup_pending or starting:
+            self.schedule(self.tick, self.delay_ms)
+            return
+        if self.controller.can_open and not self._opened:
+            self._opened = True
+            self.open_browser()
+
+
 class ControllerWindowActions:
     """Keep window commands thin and make shutdown behavior testable."""
 
@@ -181,17 +212,15 @@ def run_controller(root: Path) -> int:
         message.set(controller.error or "")
         open_button.configure(state=tk.NORMAL if controller.can_open else tk.DISABLED)
 
-    def start():
-        threading.Thread(target=controller.start_services, daemon=True).start()
-        window.after(100, poll)
+    poller = StartupPoller(controller, window.after, update, controller.open_agentforge)
 
-    def poll():
-        update()
-        if controller.backend.state is ServiceState.STARTING or controller.frontend.state is ServiceState.STARTING:
-            window.after(100, poll)
-        else:
-            if controller.can_open:
-                controller.open_agentforge()
+    def start_worker():
+        def worker():
+            try:
+                controller.start_services()
+            finally:
+                poller.complete()
+        threading.Thread(target=worker, daemon=True).start()
 
     def stop():
         actions.stop_services()
@@ -206,7 +235,7 @@ def run_controller(root: Path) -> int:
     tk.Button(buttons, text="Exit AgentForge", command=actions.exit).grid(row=0, column=2, padx=4)
     window.protocol("WM_DELETE_WINDOW", actions.close_x)
     update()
-    start()
+    poller.start(start_worker)
     window.mainloop()
     return 0
 

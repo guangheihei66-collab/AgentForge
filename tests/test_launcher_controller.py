@@ -1,4 +1,4 @@
-from launcher.controller import ControllerWindowActions, LauncherController, ServiceState
+from launcher.controller import ControllerWindowActions, LauncherController, ServiceState, StartupPoller
 
 
 class FakeProcess:
@@ -37,7 +37,7 @@ def test_preexisting_port_is_not_stolen_and_start_does_not_launch_services():
 
 def test_partial_start_failure_rolls_back_owned_services():
     session = FakeSession()
-    controller = LauncherController(session=session, port_in_use=lambda _port: False)
+    controller = LauncherController(session=session, port_in_use=lambda _port: False, health_check=lambda _port: True)
 
     result = controller.start_services()
 
@@ -98,3 +98,28 @@ def test_default_commands_use_active_root_not_provider_hotfix_worktree(tmp_path)
     assert controller.start_services() is True
 
     assert [call[2]["cwd"] for call in session.started] == [str(tmp_path / "backend"), str(tmp_path / "frontend")]
+
+
+def test_startup_poller_survives_first_tick_before_worker_state_transition():
+    controller = LauncherController(session=FakeSession(), port_in_use=lambda _port: False)
+    scheduled = []
+    updates = []
+    opened = []
+    worker_started = []
+    poller = StartupPoller(controller, lambda callback, delay: scheduled.append((callback, delay)), lambda: updates.append(True), lambda: opened.append(True))
+
+    poller.start(lambda: worker_started.append(True))
+    assert controller.backend.state is ServiceState.STOPPED
+    assert controller.frontend.state is ServiceState.STOPPED
+    poller.tick()
+    assert scheduled, "the first STOPPED observation must keep startup polling alive"
+    assert opened == []
+
+    controller.backend.state = ServiceState.RUNNING
+    controller.frontend.state = ServiceState.RUNNING
+    poller.complete()
+    poller.tick()
+    poller.tick()
+
+    assert worker_started == [True]
+    assert opened == [True]
