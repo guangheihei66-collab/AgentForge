@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { api } from './api/client'
@@ -82,6 +82,60 @@ describe('AgentForge operations console', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }))
     expect(await screen.findByText('Connection success')).toBeInTheDocument()
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/llm/provider/test'))).toHaveLength(1)
+  })
+
+  it('keeps the successful connection result when the initial status request resolves late', async () => {
+    let resolveInitial: ((response: Response) => void) | undefined
+    const initialStatus = new Promise<Response>((resolve) => { resolveInitial = resolve })
+    const fetchMock = vi.fn(async (input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/llm/provider/test') && options?.method === 'POST') {
+        return jsonResponse({
+          provider: 'openai-compatible', configured: true, model: 'example-model',
+          credential_configured: true, connection_status: 'success', failure_category: null,
+        })
+      }
+      if (url.endsWith('/llm/provider')) return initialStatus
+      throw new Error('backend unavailable')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }))
+    expect(await screen.findByText('Connection success')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveInitial?.(jsonResponse({
+        provider: 'openai-compatible', configured: true, model: 'example-model',
+        credential_configured: true, connection_status: 'not tested', failure_category: null,
+      }))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByText('Connection success')).toBeInTheDocument())
+  })
+
+  it.each(['success', 'not tested', 'failed'] as const)('renders the immediate provider result: %s', async (connectionStatus) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/llm/provider/test') && options?.method === 'POST') {
+        return jsonResponse({
+          provider: 'openai-compatible', configured: true, model: 'example-model',
+          credential_configured: true, connection_status: connectionStatus, failure_category: null,
+        })
+      }
+      if (url.endsWith('/llm/provider')) return jsonResponse({
+        provider: 'openai-compatible', configured: true, model: 'example-model',
+        credential_configured: true, connection_status: 'not tested', failure_category: null,
+      })
+      throw new Error('backend unavailable')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }))
+
+    expect(await screen.findByText(`Connection ${connectionStatus}`)).toBeInTheDocument()
   })
 
   it('shows the local Projects surface and explicit capability selection', async () => {
