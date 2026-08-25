@@ -1,8 +1,8 @@
-# AgentForge 0.1.0-beta.2 Release Checklist
+# AgentForge 0.1.0 Release Checklist
 
-Release: `0.1.0-beta.2`
-Tag: `v0.1.0-beta.2`
-Status: Beta / prerelease
+Release: `0.1.0`
+Tag: `v0.1.0`
+Status: Stable
 Distribution: source repository + Windows launcher scripts
 
 ## Release structure
@@ -44,7 +44,7 @@ AgentForge/
 
 ## Known demo boundary
 
-This is a private Beta, not a stable release. Distribution is source plus the Windows launcher scripts; no installer or automatic updater is provided, and the release pipeline remains manual.
+This is a private stable release. Distribution is source plus the Windows launcher scripts; no installer or automatic updater is provided, and the release pipeline remains manual.
 
 This is a portfolio MVP, not a production deployment. The UI intentionally demonstrates the governed approval and reporting surfaces with idempotent synthetic fixtures. Task creation and planning are backend API operations; execution remains behind the Tool Gateway and is not exposed as an unrestricted UI action. This preserves the security boundary and avoids adding an ungoverned shortcut solely for the demo.
 

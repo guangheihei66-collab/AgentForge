@@ -25,10 +25,10 @@ def test_identity_contract_has_no_secret_fields():
     assert "api_key" not in json.dumps(value.__dict__ if hasattr(value, "__dict__") else {"product": value.product, "version": value.version, "revision": value.revision, "environment": value.environment})
 
 
-def test_runtime_identity_uses_canonical_beta_version():
+def test_runtime_identity_uses_canonical_stable_version():
     from app.identity.service import get_runtime_identity
 
-    assert get_runtime_identity().version == "0.1.0-beta.2"
+    assert get_runtime_identity().version == "0.1.0"
 
 
 def test_diagnostics_endpoint_is_read_only_and_secret_free():
