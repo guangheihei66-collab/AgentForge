@@ -152,6 +152,18 @@ if ($ResolvePythonOnly) {
   exit 0
 }
 
+# The native Controller owns the service session and its Windows Job Object.
+# Keep the existing config and interpreter resolution above, then delegate the
+# normal launch path to the controller instead of managing child trees here.
+$env:PYTHONPATH = Join-Path $root "backend"
+Push-Location $root
+try {
+  & $python -m launcher.controller --root $root
+  exit $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+
 try {
   Write-LauncherLog "Starting AgentForge from $root"
   if ($hasPythonOverride) {
