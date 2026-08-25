@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import type { ApprovalQueueItem, CapabilityPlanStep, Plan, ProjectDetail, ProjectSummary, ProviderStatus, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
 
@@ -50,6 +50,7 @@ export function useOperations() {
   const [live, setLive] = useState(false)
   const [providerStatus, setProviderStatus] = useState<ProviderStatus>(demoProvider)
   const [testingProvider, setTestingProvider] = useState(false)
+  const providerStatusRequestId = useRef(0)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
@@ -67,10 +68,16 @@ export function useOperations() {
   }, [selectedId])
 
   useEffect(() => { void refresh() }, [refresh])
-  useEffect(() => { void api.getProviderStatus().then(setProviderStatus).catch(() => undefined) }, [])
+  useEffect(() => {
+    const requestId = ++providerStatusRequestId.current
+    void api.getProviderStatus().then((status) => {
+      if (requestId === providerStatusRequestId.current) setProviderStatus(status)
+    }).catch(() => undefined)
+  }, [])
 
   async function testProviderConnection() {
     setTestingProvider(true)
+    providerStatusRequestId.current += 1
     try { setProviderStatus(await api.testProviderConnection()) } finally { setTestingProvider(false) }
   }
 
