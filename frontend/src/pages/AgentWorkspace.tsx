@@ -1,19 +1,23 @@
 import { useState, type FormEvent } from 'react'
 import { ArrowRight, Bot, Play } from 'lucide-react'
-import type { ApprovalQueueItem, ProjectSummary } from '../types'
+import type { ApprovalQueueItem, ProjectSummary, TaskSummary } from '../types'
+import { useAgentTaskPolling } from '../agent/polling'
 
-export function AgentWorkspace({ projects, planning, error, onStart, approvals = [], onApprove, onReject }: {
+export function AgentWorkspace({ projects, planning, error, onStart, approvals = [], task, onRefreshTask, onApprove, onReject }: {
   projects: ProjectSummary[]
   planning: boolean
   error: string | null
   onStart: (projectId: string, goal: string) => Promise<void>
   approvals?: ApprovalQueueItem[]
+  task?: TaskSummary
+  onRefreshTask?: (taskId: string) => Promise<void>
   onApprove?: (approvalId: string) => Promise<void>
   onReject?: (approvalId: string, reason: string) => Promise<void>
 }) {
   const [projectId, setProjectId] = useState('')
   const [goal, setGoal] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const polling = useAgentTaskPolling(task?.id, task?.status, onRefreshTask ?? (async () => undefined))
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!projectId || !goal.trim() || submitting || planning) return
@@ -28,6 +32,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
       <label>Goal<textarea aria-label="Goal" value={goal} onChange={event => setGoal(event.target.value)} placeholder="Check whether this project is ready to release." required /></label>
       <button className="button button-primary" disabled={submitting || planning || !projectId || !goal.trim()}><Play size={15} /> {planning ? 'Planning...' : 'Start Agent'}</button>
       {error && <div className="form-message" role="alert">{error}</div>}
+      {polling.refreshError && <div className="form-message" role="status">Unable to refresh Agent status: {polling.refreshError}</div>}
     </form>
     <div className="content-grid dashboard-grid"><div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div><div className="panel"><div className="panel-title"><h3>Approval</h3><span>{approvals.length ? `${approvals.length} pending` : 'No pending approval'}</span></div>{approvals.map(item => <div key={item.id}><strong>{item.task_title}</strong><span>Plan v{item.plan_version}</span><button className="text-button" onClick={() => onApprove?.(item.approval_id ?? item.id)}>Approve <ArrowRight size={14} /></button><button className="text-button" onClick={() => onReject?.(item.approval_id ?? item.id, 'Plan requires operator changes')}>Reject</button></div>)}</div></div>
   </section>
