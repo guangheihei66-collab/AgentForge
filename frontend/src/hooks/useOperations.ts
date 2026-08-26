@@ -99,7 +99,10 @@ export function useOperations() {
         setDetail(nextDetail); setReport(nextReport)
       }
       setLive(true)
-    } catch { setLive(false) }
+    } catch (error) {
+      if (generation !== agentRequestGeneration.current) return
+      setLive(false)
+    }
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])

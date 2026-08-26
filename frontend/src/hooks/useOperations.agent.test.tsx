@@ -105,4 +105,15 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     expect(result.current.tasks).toEqual([])
     expect(apiMock.createTask).not.toHaveBeenCalled()
   })
+
+  it('keeps live after an older refresh fails following a newer success', async () => {
+    let rejectOld!: (error: Error) => void
+    apiMock.listTasks.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectOld = reject })).mockResolvedValue([])
+    apiMock.listProjects.mockReturnValueOnce(new Promise(() => undefined)).mockResolvedValue([project])
+    const { result } = renderHook(() => useOperations())
+    await act(async () => { await result.current.refresh() })
+    await waitFor(() => expect(result.current.live).toBe(true))
+    await act(async () => { rejectOld(new Error('late stale refresh failure')) })
+    expect(result.current.live).toBe(true)
+  })
 })
