@@ -85,7 +85,7 @@ export type ApprovalSnapshot = {
 }
 
 export type Plan = { id: string; version: number; plan_json: PlanDocument; validation_status: string; created_at: string }
-export type Approval = { id: string; plan_id: string; decision: string; approver: string; reason?: string; resolved_snapshot?: ApprovalSnapshot; created_at: string }
+export type Approval = { id: string; plan_id: string; plan_version?: number; decision: string; approver: string; reason?: string; resolved_snapshot?: ApprovalSnapshot; created_at: string }
 export type Execution = { id: string; tool_name: string; action: string; status: string; result_summary?: string; artifact_path?: string; content_hash?: string; started_at: string; finished_at?: string }
 export type Evidence = { id: string; summary: string; artifact_path?: string; content_hash?: string; created_at: string }
 export type AuditEvent = { id: string; event_type: string; actor: string; payload_summary: string; correlation_id: string; created_at: string }

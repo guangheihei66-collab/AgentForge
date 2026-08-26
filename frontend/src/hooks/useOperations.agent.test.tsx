@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useOperations } from './useOperations'
 
 const apiMock = vi.hoisted(() => ({
-  listTasks: vi.fn(), getPendingApprovals: vi.fn(), listProjects: vi.fn(), getTaskDetail: vi.fn(), getReport: vi.fn(), getProviderStatus: vi.fn(), createTask: vi.fn(), createPlan: vi.fn(), createApproval: vi.fn(), execute: vi.fn(),
+  listTasks: vi.fn(), getPendingApprovals: vi.fn(), listProjects: vi.fn(), getTaskDetail: vi.fn(), getReport: vi.fn(), getProviderStatus: vi.fn(), createTask: vi.fn(), createPlan: vi.fn(), createApproval: vi.fn(), executeTask: vi.fn(),
 }))
 vi.mock('../api/client', () => ({ api: apiMock }))
 
@@ -36,7 +36,7 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     expect(apiMock.createApproval).toHaveBeenCalledWith('task-1', 'plan-1', 1)
     expect(apiMock.createPlan.mock.invocationCallOrder[0]).toBeGreaterThan(apiMock.createTask.mock.invocationCallOrder[0])
     expect(apiMock.createApproval.mock.invocationCallOrder[0]).toBeGreaterThan(apiMock.createPlan.mock.invocationCallOrder[0])
-    expect(apiMock.execute).not.toHaveBeenCalled()
+    expect(apiMock.executeTask).not.toHaveBeenCalled()
   })
 
   it('does not duplicate an authoritative matching Approval', async () => {
@@ -60,7 +60,16 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     const { result } = renderHook(() => useOperations())
     await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL').catch(() => undefined) })
     expect(apiMock.createApproval).not.toHaveBeenCalled()
-    expect(apiMock.execute).not.toHaveBeenCalled()
+    expect(apiMock.executeTask).not.toHaveBeenCalled()
     expect(result.current.agentError).toContain('INVALID_RESPONSE')
+  })
+
+  it('executes only after an authoritative current Plan is approved', async () => {
+    apiMock.getTaskDetail.mockResolvedValue({ ...detail, approvals: [{ ...approval, decision: 'APPROVED' }] })
+    apiMock.executeTask.mockResolvedValue(task)
+    const { result } = renderHook(() => useOperations())
+    await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL') })
+    await act(async () => { await result.current.executeAgentTask() })
+    expect(apiMock.executeTask).toHaveBeenCalledWith('task-1')
   })
 })

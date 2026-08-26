@@ -125,6 +125,15 @@ export function useOperations() {
     }
   }
 
+  async function executeAgentTask() {
+    if (!selectedId || !detail) throw new Error('No authoritative task is selected.')
+    const currentPlan = detail.plans.reduce((latest, candidate) => !latest || candidate.version > latest.version ? candidate : latest, undefined as TaskDetail['plans'][number] | undefined)
+    const approved = currentPlan && detail.approvals.some(item => item.plan_id === currentPlan.id && item.plan_version === currentPlan.version && item.decision === 'APPROVED')
+    if (!approved) throw new Error('Execution requires an approved current Plan.')
+    await api.executeTask(selectedId)
+    await refreshTask(selectedId)
+  }
+
   async function chooseTask(id: string) {
     setSelectedId(id)
     try { setDetail(await api.getTaskDetail(id)); setReport(await api.getReport(id)); setLive(true) } catch { if (id === demoTask.id) { setDetail(demoDetail); setReport({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 2, execution_count: 0 }) } }
@@ -174,5 +183,5 @@ export function useOperations() {
     }
   }
 
-  return { tasks, approvals, projects, project, detail, report, selectedId, chooseTask, chooseProject, createProject, validateWorkspace, createTask, createAgentTask, refreshTask, archiveProject, act, refresh, live, providerStatus, testingProvider, testProviderConnection, actionError, agentPlanning, agentError }
+  return { tasks, approvals, projects, project, detail, report, selectedId, chooseTask, chooseProject, createProject, validateWorkspace, createTask, createAgentTask, executeAgentTask, refreshTask, archiveProject, act, refresh, live, providerStatus, testingProvider, testProviderConnection, actionError, agentPlanning, agentError }
 }

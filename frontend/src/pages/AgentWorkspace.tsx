@@ -6,8 +6,9 @@ import { AgentApprovalCard } from '../components/AgentApprovalCard'
 import { AgentPlanCard } from '../components/AgentPlanCard'
 import { buildAgentTimeline } from '../agent/timeline'
 import { AgentTimeline } from '../components/AgentTimeline'
+import { AgentReportCard } from '../components/AgentReportCard'
 
-export function AgentWorkspace({ projects, planning, error, onStart, approvals = [], task, detail, report, onRefreshTask, onApprove, onReject }: {
+export function AgentWorkspace({ projects, planning, error, onStart, approvals = [], task, detail, report, onRefreshTask, onApprove, onReject, onExecute }: {
   projects: ProjectSummary[]
   planning: boolean
   error: string | null
@@ -19,6 +20,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
   onRefreshTask?: (taskId: string) => Promise<void>
   onApprove?: (approvalId: string) => Promise<void>
   onReject?: (approvalId: string, reason: string) => Promise<void>
+  onExecute?: () => Promise<void>
 }) {
   const [projectId, setProjectId] = useState('')
   const [goal, setGoal] = useState('')
@@ -44,6 +46,8 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
     </form>
     {currentPlan && <AgentPlanCard plan={currentPlan} rawGoal={detail?.task.goal ?? ''} />}
     {approvals[0] && onApprove && onReject && <AgentApprovalCard item={approvals[0]} onApprove={onApprove} onReject={onReject} />}
+    {detail?.approvals.some(approval => approval.decision === 'APPROVED' && approval.plan_id === currentPlan?.id && approval.plan_version === currentPlan?.version) && onExecute && <div className="panel"><div className="panel-title"><h3>Execution</h3><span>Explicit operator action</span></div><p>The current Plan has an authoritative approval. Execution has not started automatically.</p><button className="button button-primary" onClick={() => void onExecute()}>Execute approved Plan</button></div>}
     {detail && report ? <AgentTimeline entries={timeline} /> : !planning && <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div>}
+    {detail && report && <AgentReportCard detail={detail} report={report} />}
   </section>
 }
