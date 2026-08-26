@@ -104,6 +104,11 @@ export function useOperations() {
 
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
+    if (live) return undefined
+    const timer = setInterval(() => { void refresh() }, 2000)
+    return () => clearInterval(timer)
+  }, [live, refresh])
+  useEffect(() => {
     const requestId = ++providerStatusRequestId.current
     void api.getProviderStatus().then((status) => {
       if (requestId === providerStatusRequestId.current) setProviderStatus(status)

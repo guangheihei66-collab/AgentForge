@@ -92,4 +92,17 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     await waitFor(() => expect(result.current.selectedId).toBe('task-1'))
     expect(apiMock.getTaskDetail).toHaveBeenCalledWith('task-1')
   })
+
+  it('recovers live authoritative data after an initial read failure without creating anything', async () => {
+    apiMock.listTasks.mockRejectedValueOnce(new Error('backend unavailable')).mockResolvedValue([])
+    apiMock.listProjects.mockRejectedValueOnce(new Error('backend unavailable')).mockResolvedValue([project])
+    const { result } = renderHook(() => useOperations())
+    await waitFor(() => expect(apiMock.listTasks).toHaveBeenCalled())
+    expect(result.current.live).toBe(false)
+    await act(async () => { await result.current.refresh() })
+    expect(result.current.live).toBe(true)
+    expect(result.current.projects).toEqual([project])
+    expect(result.current.tasks).toEqual([])
+    expect(apiMock.createTask).not.toHaveBeenCalled()
+  })
 })
