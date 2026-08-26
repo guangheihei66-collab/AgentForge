@@ -220,7 +220,7 @@ function approvalFlowFetch() {
     if (url.endsWith('/projects')) return jsonResponse([])
     if (url.endsWith('/llm/provider')) return jsonResponse({ provider: 'mock', configured: true, model: 'deterministic-mock', credential_configured: false, connection_status: 'not tested' })
     if (url.endsWith('/tasks/task-live/detail')) return jsonResponse({ task, plans: [plan], approvals: [], executions: [], evidence: [], audit: [] })
-    if (url.endsWith('/tasks/task-live/report')) return jsonResponse({ task, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, evidence: [], audit_count: 0, execution_count: 0 })
+    if (url.endsWith('/tasks/task-live/report')) return jsonResponse({ task, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 0, execution_count: 0 })
     if (url.endsWith('/tasks/task-live/approval') && request?.method === 'POST') return jsonResponse({ id: 'approval-live', task_id: task.id, plan_id: plan.id, plan_version: 1, decision: 'PENDING', approver: 'pending', created_at: task.updated_at })
     if (url.endsWith('/approvals/approval-live/approve') && request?.method === 'POST') {
       approved = true

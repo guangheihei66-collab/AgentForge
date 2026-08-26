@@ -4,10 +4,11 @@ import { buildAgentTimeline } from './timeline'
 
 const task = { id: 'task-1', project_id: 'project-1', title: 'Release review', goal: 'Check release risks', workspace: 'D:\\repo', status: 'FAILED' as const, created_at: '2026-08-26T10:00:00Z', updated_at: '2026-08-26T10:06:00Z' }
 const plan = (id: string, version: number) => ({ id, version, validation_status: 'VALID', created_at: `2026-08-26T10:0${version}:00Z`, plan_json: { schema_version: 2 as const, summary: `Plan ${version}`, steps: [], resolved_steps: [], project_authority: { project_id: 'project-1', config_version: 1, authority_fingerprint: 'authority', canonical_workspace_root: 'd:\\repo' } } })
+const snapshot = { schema_version: 2 as const, project_authority: { project_id: 'project-1', config_version: 1, authority_fingerprint: 'authority', canonical_workspace_root: 'd:\\repo' }, steps: [] }
 const detail: TaskDetail = {
   task,
   plans: [plan('plan-2', 2), plan('plan-1', 1)],
-  approvals: [{ id: 'approval-2', plan_id: 'plan-2', decision: 'PENDING', approver: 'pending', resolved_snapshot: {}, created_at: '2026-08-26T10:04:30Z' }],
+  approvals: [{ id: 'approval-2', plan_id: 'plan-2', decision: 'PENDING', approver: 'pending', resolved_snapshot: snapshot, created_at: '2026-08-26T10:04:30Z' }],
   executions: [{ id: 'execution-1', tool_name: 'test_run', action: 'run_profile', status: 'FAILED', result_summary: 'semantic failure', started_at: '2026-08-26T10:03:00Z', finished_at: '2026-08-26T10:03:10Z' }],
   evidence: [{ id: 'evidence-1', summary: 'test evidence', artifact_path: 'D:\\repo\\result.json', content_hash: 'sha', created_at: '2026-08-26T10:03:11Z' }],
   audit: [
@@ -40,7 +41,7 @@ describe('authoritative Agent timeline projection', () => {
   })
 
   it('maps an authoritative approved Approval and terminal success', () => {
-    const approved = { ...detail, task: { ...task, status: 'SUCCESS' as const }, approvals: [{ id: 'approval-1', plan_id: 'plan-1', decision: 'APPROVED', approver: 'operator', resolved_snapshot: {}, created_at: '2026-08-26T10:02:00Z' }], executions: [] }
+    const approved = { ...detail, task: { ...task, status: 'SUCCESS' as const }, approvals: [{ id: 'approval-1', plan_id: 'plan-1', decision: 'APPROVED', approver: 'operator', resolved_snapshot: snapshot, created_at: '2026-08-26T10:02:00Z' }], executions: [] }
     const entries = buildAgentTimeline({ detail: approved, report: { ...report, task: approved.task, readiness: 'PASS', failed_steps: 0, execution_count: 0 } })
     expect(entries.map(entry => entry.kind)).toContain('APPROVED')
     expect(entries.map(entry => entry.kind)).toContain('COMPLETED')
