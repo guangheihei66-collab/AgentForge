@@ -17,7 +17,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
   task?: TaskSummary
   detail?: TaskDetail
   report?: Report
-  onRefreshTask?: (taskId: string) => Promise<void>
+  onRefreshTask?: (taskId: string) => Promise<unknown>
   onApprove?: (approvalId: string) => Promise<void>
   onReject?: (approvalId: string, reason: string) => Promise<void>
   onExecute?: () => Promise<void>
@@ -25,7 +25,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
   const [projectId, setProjectId] = useState('')
   const [goal, setGoal] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const polling = useAgentTaskPolling(task?.id, task?.status, onRefreshTask ?? (async () => undefined))
+  const polling = useAgentTaskPolling(task?.id, task?.status, onRefreshTask ? async (taskId) => { await onRefreshTask(taskId) } : async () => undefined)
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!projectId || !goal.trim() || submitting || planning) return
@@ -50,7 +50,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
     </form>
     {currentPlan && <AgentPlanCard plan={currentPlan} rawGoal={detail?.task.goal ?? ''} />}
     {currentApproval && onApprove && onReject && <AgentApprovalCard item={currentApproval} onApprove={onApprove} onReject={onReject} />}
-    {detail?.approvals.some(approval => approval.decision === 'APPROVED' && approval.plan_id === currentPlan?.id && approval.plan_version === currentPlan?.version) && onExecute && <div className="panel"><div className="panel-title"><h3>Execution</h3><span>Explicit operator action</span></div><p>The current Plan has an authoritative approval. Execution has not started automatically.</p><button className="button button-primary" onClick={() => void onExecute()}>Execute approved Plan</button></div>}
+    {detail?.approvals.some(approval => approval.decision === 'APPROVED' && approval.plan_id === currentPlan?.id && approval.plan_version === currentPlan?.version) && onExecute && <div className="panel"><div className="panel-title"><h3>Execution</h3><span>Governed execution</span></div><p>The current Plan has an authoritative approval. Execution is available for retry if needed.</p><button className="button button-primary" onClick={() => void onExecute()}>Execute approved Plan</button></div>}
     {detail && report ? <AgentTimeline entries={timeline} /> : !planning && <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div>}
     {detail && report && <AgentReportCard detail={detail} report={report} />}
   </section>

@@ -59,6 +59,7 @@ export function useOperations() {
   const selectedIdRef = useRef(selectedId)
   const agentSelectionLocked = useRef(Boolean(selectedId))
   const agentRequestGeneration = useRef(0)
+  const executionInFlight = useRef(false)
   useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
   const selectAgentTask = useCallback((id: string | undefined) => {
     selectedIdRef.current = id
@@ -77,12 +78,13 @@ export function useOperations() {
       api.getReport(id),
       api.getPendingApprovals(),
     ])
-    if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return
+    if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return undefined
     selectAgentTask(id)
     setDetail(nextDetail)
     setReport(nextReport)
     setApprovals(nextApprovals)
     setLive(true)
+    return nextDetail
   }, [selectAgentTask])
 
   const refresh = useCallback(async () => {
@@ -167,13 +169,20 @@ export function useOperations() {
     }
   }
 
-  async function executeAgentTask() {
-    if (!selectedId || !detail) throw new Error('No authoritative task is selected.')
-    const currentPlan = detail.plans.reduce((latest, candidate) => !latest || candidate.version > latest.version ? candidate : latest, undefined as TaskDetail['plans'][number] | undefined)
-    const approved = currentPlan && detail.approvals.some(item => item.plan_id === currentPlan.id && item.plan_version === currentPlan.version && item.decision === 'APPROVED')
+  async function executeAgentTask(authoritativeDetail?: TaskDetail) {
+    if (!selectedId || (!detail && !authoritativeDetail)) throw new Error('No authoritative task is selected.')
+    if (executionInFlight.current) return
+    const currentDetail = authoritativeDetail ?? detail
+    const currentPlan = currentDetail!.plans.reduce((latest, candidate) => !latest || candidate.version > latest.version ? candidate : latest, undefined as TaskDetail['plans'][number] | undefined)
+    const approved = currentPlan && currentDetail!.approvals.some(item => item.plan_id === currentPlan.id && item.plan_version === currentPlan.version && item.decision === 'APPROVED')
     if (!approved) throw new Error('Execution requires an approved current Plan.')
-    await api.executeTask(selectedId)
-    await refreshTask(selectedId)
+    executionInFlight.current = true
+    try {
+      await api.executeTask(selectedId)
+      await refreshTask(selectedId)
+    } finally {
+      executionInFlight.current = false
+    }
   }
 
   async function chooseTask(id: string) {
@@ -214,7 +223,7 @@ export function useOperations() {
     await refresh()
   }
 
-  async function act(action: 'approve' | 'reject' | 'cancel', approvalId?: string) {
+  async function act(action: 'approve' | 'reject' | 'cancel', approvalId?: string): Promise<boolean> {
     setActionError(null)
     try {
       const item = approvalId ? approvals.find((candidate) => candidate.id === approvalId) : undefined
@@ -227,8 +236,10 @@ export function useOperations() {
       if (action === 'reject' && effectiveApprovalId) await api.reject(effectiveApprovalId, 'Plan requires operator changes')
       if (action === 'cancel' && selectedId) await api.cancel(selectedId)
       await refresh()
+      return true
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'The decision could not be completed.')
+      return false
     }
   }
 
