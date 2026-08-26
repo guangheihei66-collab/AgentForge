@@ -33,9 +33,13 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
     try { await onStart(projectId, goal) } finally { setSubmitting(false) }
   }
   const currentPlan = detail?.plans.reduce((latest, candidate) => !latest || candidate.version > latest.version ? candidate : latest, undefined as TaskDetail['plans'][number] | undefined)
+  const currentApproval = task && currentPlan ? approvals.find(item => item.task_id === task.id && item.plan_id === currentPlan.id && item.plan_version === currentPlan.version && item.decision === 'PENDING') : undefined
+  const statusLabel = planning ? 'Planning' : task?.status === 'WAITING_APPROVAL' ? 'Waiting for approval' : task?.status === 'RUNNING' ? 'Running' : task?.status === 'SUCCESS' ? 'Completed' : task?.status === 'FAILED' ? 'Failed' : task?.status
+  const nextAction = planning ? 'Agent is preparing a governed plan.' : task?.status === 'WAITING_APPROVAL' ? 'Review the plan and requested capabilities before execution.' : task?.status === 'RUNNING' ? 'Agent is executing approved governed steps.' : task?.status === 'SUCCESS' ? 'Agent completed the run. Review conclusion and evidence.' : task?.status === 'FAILED' ? 'Agent run failed. Review the timeline and error details.' : 'Start an Agent to begin a governed run.'
   const timeline = detail && report ? buildAgentTimeline({ detail, report, pendingApproval: approvals[0], transientPlanning: planning }) : []
   return <section className="page-stack">
     <div className="page-heading"><div><div className="eyebrow">REPOSITORY ANALYST AGENT</div><h2>Agent workspace</h2><p>Perform governed repository analysis with human approval.</p></div><Bot size={30} /></div>
+    {task ? <div className="panel" aria-label="Current Agent run"><div className="panel-title"><h3>Current Agent Run</h3><span>{statusLabel ?? 'Unknown'}</span></div><p><strong>Project:</strong> {projects.find(project => project.id === task.project_id)?.name ?? task.project_id ?? 'Unknown'}</p><p><strong>Task:</strong> <code>{task.id}</code></p>{currentPlan && <p><strong>Plan:</strong> v{currentPlan.version}</p>}<p>{nextAction}</p></div> : !planning && <div className="panel" aria-label="No current Agent run"><h3>No current Agent run</h3><p>Create a new Agent Task to begin.</p></div>}
     <form className="panel" onSubmit={submit}>
       <div className="panel-title"><h3>Goal Composer</h3><span>Project authority required</span></div>
       <label>Project<select aria-label="Project" value={projectId} onChange={event => setProjectId(event.target.value)} required><option value="">Select a Project</option>{projects.filter(project => project.status === 'ACTIVE').map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
@@ -45,7 +49,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
       {polling.refreshError && <div className="form-message" role="status">Unable to refresh Agent status: {polling.refreshError}</div>}
     </form>
     {currentPlan && <AgentPlanCard plan={currentPlan} rawGoal={detail?.task.goal ?? ''} />}
-    {approvals[0] && onApprove && onReject && <AgentApprovalCard item={approvals[0]} onApprove={onApprove} onReject={onReject} />}
+    {currentApproval && onApprove && onReject && <AgentApprovalCard item={currentApproval} onApprove={onApprove} onReject={onReject} />}
     {detail?.approvals.some(approval => approval.decision === 'APPROVED' && approval.plan_id === currentPlan?.id && approval.plan_version === currentPlan?.version) && onExecute && <div className="panel"><div className="panel-title"><h3>Execution</h3><span>Explicit operator action</span></div><p>The current Plan has an authoritative approval. Execution has not started automatically.</p><button className="button button-primary" onClick={() => void onExecute()}>Execute approved Plan</button></div>}
     {detail && report ? <AgentTimeline entries={timeline} /> : !planning && <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div>}
     {detail && report && <AgentReportCard detail={detail} report={report} />}

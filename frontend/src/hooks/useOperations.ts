@@ -44,7 +44,9 @@ export function useOperations() {
   const [projects, setProjects] = useState<ProjectSummary[]>([demoProject])
   const [project, setProject] = useState<ProjectDetail>(demoProject)
   const [approvals, setApprovals] = useState<ApprovalQueueItem[]>([demoApproval])
-  const [selectedId, setSelectedId] = useState<string | undefined>()
+  const [selectedId, setSelectedId] = useState<string | undefined>(() => {
+    try { return typeof globalThis.localStorage !== 'undefined' ? globalThis.localStorage.getItem('agentforge.agent.currentTaskId') ?? undefined : undefined } catch { return undefined }
+  })
   const [detail, setDetail] = useState<TaskDetail>(demoDetail)
   const [report, setReport] = useState<Report>({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 2, execution_count: 0 })
   const [live, setLive] = useState(false)
@@ -54,33 +56,50 @@ export function useOperations() {
   const [agentError, setAgentError] = useState<string | null>(null)
   const providerStatusRequestId = useRef(0)
   const [actionError, setActionError] = useState<string | null>(null)
+  const selectedIdRef = useRef(selectedId)
+  const agentRequestGeneration = useRef(0)
+  useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
+  const selectAgentTask = useCallback((id: string | undefined) => {
+    selectedIdRef.current = id
+    setSelectedId(id)
+    try {
+      if (typeof globalThis.localStorage === 'undefined') return
+      if (id) globalThis.localStorage.setItem('agentforge.agent.currentTaskId', id)
+      else globalThis.localStorage.removeItem('agentforge.agent.currentTaskId')
+    } catch { /* storage is optional */ }
+  }, [])
 
   const refreshTask = useCallback(async (id: string) => {
+    const generation = ++agentRequestGeneration.current
     const [nextDetail, nextReport, nextApprovals] = await Promise.all([
       api.getTaskDetail(id),
       api.getReport(id),
       api.getPendingApprovals(),
     ])
-    setSelectedId(id)
+    if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return
+    selectAgentTask(id)
     setDetail(nextDetail)
     setReport(nextReport)
     setApprovals(nextApprovals)
     setLive(true)
-  }, [])
+  }, [selectAgentTask])
 
   const refresh = useCallback(async () => {
+    const generation = ++agentRequestGeneration.current
+    const requestedId = selectedIdRef.current
     try {
       const [nextTasks, nextApprovals, nextProjects] = await Promise.all([api.listTasks(), api.getPendingApprovals(), api.listProjects()])
+      if (generation !== agentRequestGeneration.current || selectedIdRef.current !== requestedId) return
       setTasks(nextTasks); setApprovals(nextApprovals); setProjects(nextProjects)
-      const id = selectedId && nextTasks.some(task => task.id === selectedId) ? selectedId : nextTasks[0]?.id
+      const id = requestedId
       if (id) {
-        setSelectedId(id)
-        setDetail(await api.getTaskDetail(id))
-        setReport(await api.getReport(id))
+        const [nextDetail, nextReport] = await Promise.all([api.getTaskDetail(id), api.getReport(id)])
+        if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return
+        setDetail(nextDetail); setReport(nextReport)
       }
       setLive(true)
     } catch { setLive(false) }
-  }, [selectedId])
+  }, [])
 
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
@@ -97,11 +116,13 @@ export function useOperations() {
   }
 
   async function createAgentTask(projectId: string, goal: string): Promise<TaskSummary> {
+    const generation = ++agentRequestGeneration.current
     setAgentPlanning(true)
     setAgentError(null)
     try {
       const created = await api.createTask({ project_id: projectId, title: 'Repository Analyst Agent', goal })
-      setSelectedId(created.id)
+      if (generation !== agentRequestGeneration.current) throw new Error('Agent run selection changed.')
+      selectAgentTask(created.id)
       const plan = await api.createPlan(created.id)
       let authoritativeDetail = await api.getTaskDetail(created.id)
       const matching = authoritativeDetail.approvals.find((item) => item.plan_id === plan.id && item.resolved_snapshot && item.decision !== 'REJECTED')
@@ -135,8 +156,15 @@ export function useOperations() {
   }
 
   async function chooseTask(id: string) {
-    setSelectedId(id)
-    try { setDetail(await api.getTaskDetail(id)); setReport(await api.getReport(id)); setLive(true) } catch { if (id === demoTask.id) { setDetail(demoDetail); setReport({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 2, execution_count: 0 }) } }
+    const generation = ++agentRequestGeneration.current
+    selectAgentTask(id)
+    try {
+      const [nextDetail, nextReport] = await Promise.all([api.getTaskDetail(id), api.getReport(id)])
+      if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return
+      setDetail(nextDetail); setReport(nextReport); setLive(true)
+    } catch {
+      if (generation === agentRequestGeneration.current && selectedIdRef.current === id && id === demoTask.id) { setDetail(demoDetail); setReport({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 2, execution_count: 0 }) }
+    }
   }
 
   async function chooseProject(id: string) {

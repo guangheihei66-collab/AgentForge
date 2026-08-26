@@ -15,8 +15,11 @@ const detail = { task, plans: [plan], approvals: [approval], executions: [], evi
 const report = { task, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 0, execution_count: 0 }
 
 describe('Agent Task -> Plan -> Approval orchestration', () => {
+  const storage = new Map<string, string>()
   beforeEach(() => {
     vi.clearAllMocks()
+    storage.clear()
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } })
     apiMock.listTasks.mockResolvedValue([])
     apiMock.getPendingApprovals.mockResolvedValue([])
     apiMock.listProjects.mockResolvedValue([project])
@@ -71,5 +74,22 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL') })
     await act(async () => { await result.current.executeAgentTask() })
     expect(apiMock.executeTask).toHaveBeenCalledWith('task-1')
+  })
+
+  it('keeps the newly-created run when the mount list response arrives late', async () => {
+    let releaseList!: (value: unknown[]) => void
+    apiMock.listTasks.mockReturnValueOnce(new Promise(resolve => { releaseList = resolve }))
+    const { result } = renderHook(() => useOperations())
+    await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL') })
+    await act(async () => { releaseList([ { ...task, id: 'historical-task' } ]) })
+    expect(result.current.selectedId).toBe('task-1')
+  })
+
+  it('restores the persisted Agent run instead of selecting unrelated history', async () => {
+    storage.set('agentforge.agent.currentTaskId', 'task-1')
+    apiMock.getTaskDetail.mockResolvedValue(detail)
+    const { result } = renderHook(() => useOperations())
+    await waitFor(() => expect(result.current.selectedId).toBe('task-1'))
+    expect(apiMock.getTaskDetail).toHaveBeenCalledWith('task-1')
   })
 })

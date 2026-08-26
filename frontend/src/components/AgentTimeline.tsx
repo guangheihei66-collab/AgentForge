@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { AgentTimelineEntry } from '../agent/types'
 
 const labels: Record<AgentTimelineEntry['kind'], string> = {
@@ -5,5 +6,6 @@ const labels: Record<AgentTimelineEntry['kind'], string> = {
 }
 
 export function AgentTimeline({ entries }: { entries: AgentTimelineEntry[] }) {
-  return <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>{entries.length} events</span></div>{entries.length === 0 ? <p>No persisted Agent events yet.</p> : <ol>{entries.map(entry => <li key={entry.id}><strong>{labels[entry.kind]}</strong>{entry.planVersion && <span>Plan v{entry.planVersion}</span>}<span>{entry.summary}</span><time>{new Date(entry.timestamp).toLocaleString()}</time></li>)}</ol>}</div>
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  return <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>{entries.length} events</span></div>{entries.length === 0 ? <p>No persisted Agent events yet.</p> : <ol>{entries.map(entry => <li key={entry.id}><strong>{labels[entry.kind]}</strong>{entry.planVersion && <span>Plan v{entry.planVersion}</span>}<span>{entry.summary}</span><time>{new Date(entry.timestamp).toLocaleString()}</time>{entry.raw && <><button type="button" aria-expanded={Boolean(expanded[entry.id])} onClick={() => setExpanded(value => ({ ...value, [entry.id]: !value[entry.id] }))}>{expanded[entry.id] ? 'Hide technical details' : 'Show technical details'}</button>{expanded[entry.id] && <pre>{JSON.stringify(entry.raw, null, 2)}</pre>}</>}</li>)}</ol>}</div>
 }
