@@ -45,7 +45,7 @@
 
 **Interfaces:** Export `AgentTimelineInput = { detail: TaskDetail; report: Report; pendingApproval?: ApprovalQueueItem; transientPlanning?: boolean }` and `buildAgentTimeline(input: AgentTimelineInput): AgentTimelineEntry[]`.
 
-**Source mapping:** `TASK_CREATED`/Task `created_at` -> `GOAL_RECEIVED`; transient flag -> transient `PLANNING`; `PLAN_CREATED`/Plan timestamp -> `PLAN_CREATED`; pending Approval or Task `WAITING_APPROVAL` -> `WAITING_APPROVAL`; Approval decisions -> `APPROVED`/`APPROVAL_REJECTED`; terminal ToolExecution -> completion/failure; `RUNTIME_OBSERVATION` -> `OBSERVATION_RECORDED`; `REPLAN_REQUESTED` -> `REPLANNING`; `PLAN_VERSION_CREATED` -> `SUCCESSOR_PLAN_CREATED`; terminal Task state -> `COMPLETED`/`FAILED`. Sort by timestamp, then persisted order and stable source ID. Never infer success from missing errors.
+**Source mapping:** `TASK_CREATED`/Task `created_at` -> `GOAL_RECEIVED`; transient flag while real `/plan` or required `/approval` request is unresolved -> transient `PLANNING`; `PLAN_CREATED`/Plan timestamp -> `PLAN_CREATED`; an actual persisted Approval with `decision == PENDING` -> `WAITING_APPROVAL`; Approval decisions -> `APPROVED`/`APPROVAL_REJECTED`; terminal ToolExecution -> completion/failure; `RUNTIME_OBSERVATION` -> `OBSERVATION_RECORDED`; `REPLAN_REQUESTED` -> `REPLANNING`; `PLAN_VERSION_CREATED` -> `SUCCESSOR_PLAN_CREATED`; successor Approval for the highest Plan version -> fresh `WAITING_APPROVAL`; terminal Task state -> `COMPLETED`/`FAILED`. Task status alone never creates a real Waiting for Approval entry. Sort by timestamp, then persisted order and stable source ID. Never infer success from missing errors.
 
 - [ ] Write tests for all mappings, equal-timestamp ordering, transient-versus-persisted Planning, Plan v1/v2 lineage, fresh pending successor Approval, terminal failure, unknown audit events, and exclusion of reasoning/prompt/provider-thinking fields.
 - [ ] Run `cd frontend; npx vitest run src/agent/timeline.test.ts`; expect RED because the projection does not exist.
@@ -53,18 +53,18 @@
 - [ ] Run the same command; expect GREEN.
 - [ ] Commit `git add frontend/src/agent/timeline.ts frontend/src/agent/timeline.test.ts frontend/src/types/index.ts; git commit -m "feat: project persisted agent timeline"`.
 
-### Task 3: Add the real Planner API client method
+### Task 3: Add the real Planner and Approval API client methods
 
 **Files:** Modify `frontend/src/api/client.ts`; create `frontend/src/api/client.plan.test.ts`.
 
 **Real contract:** `backend/app/api/routes/planning.py` exposes `POST /tasks/{task_id}/plan`. The request body is `{ context?: Record<string, unknown> }` from `PlanRequest`; the response is `PlanRead` with `id: string`, `task_id: string`, `version: number`, `plan_json: Record<string, unknown>`, and `validation_status: string`. The backend invokes `PlannerAgent.create_plan`, which transitions `CREATED -> PLANNING -> WAITING_APPROVAL` on success, runs Plan Validation and Capability Resolver, and creates no Approval itself. Provider failures map to HTTP 503/429/504/502; invalid response, validation, resolution, and other value failures map to HTTP 400 with `LLM planning failed: INVALID_RESPONSE`; the existing `request<T>` helper propagates these response details as `Error`.
 
-**Interface:** Add `api.createPlan(taskId: string, context: Record<string, unknown> = {}): Promise<Plan>` using `POST /tasks/${taskId}/plan` and JSON `{ context }`. Use the existing frontend `Plan` type and do not invent response fields.
+**Interfaces:** Add `api.createPlan(taskId: string, context: Record<string, unknown> = {}): Promise<Plan>` using `POST /tasks/${taskId}/plan` and JSON `{ context }`; add `api.createApproval(taskId: string, planId: string, planVersion: number): Promise<Approval>` using `POST /tasks/{taskId}/approval` and JSON `{ plan_id, plan_version, requested_by: 'operator' }`. Use existing frontend `Plan` and `Approval` types and do not invent response fields.
 
-- [ ] Write RED tests proving the API client currently has no supported planning method, then proving the expected request contract and response fixture.
+- [ ] Write RED tests proving the API client currently has no supported planning/explicit-Approval methods, then proving both expected request contracts and response fixtures.
 - [ ] Run `cd frontend; npx vitest run src/api/client.plan.test.ts`; expect RED because `api.createPlan` is absent.
-- [ ] Implement exactly one POST to `/tasks/{taskId}/plan`, with `{ context }`, returning the real `PlanRead` response and propagating non-2xx errors through `request<T>`.
-- [ ] Run the same command; expect GREEN and assert exact task ID propagation.
+- [ ] Implement exactly one POST to `/tasks/{taskId}/plan`, with `{ context }`, and exactly one POST to `/tasks/{taskId}/approval`, with the returned Plan ID/version and `requested_by: 'operator'`; return real `PlanRead`/`ApprovalRead` responses and propagate non-2xx errors through `request<T>`.
+- [ ] Run the same command; expect GREEN and assert exact Task ID, Plan ID, Plan version, HTTP verbs, paths, bodies, and returned data propagation.
 - [ ] Commit `git add frontend/src/api/client.ts frontend/src/api/client.plan.test.ts; git commit -m "feat: call governed planning endpoint"`.
 
 ### Task 4: Agent route and Goal Composer
@@ -83,11 +83,13 @@
 
 **Files:** Modify `frontend/src/hooks/useOperations.ts`; modify `frontend/src/api/client.ts` and `frontend/src/types/index.ts` only for existing contracts; create `frontend/src/hooks/useOperations.agent.test.tsx`.
 
-**Interfaces:** Preserve existing hook exports. Add `createAgentTask(projectId: string, goal: string): Promise<TaskSummary>` and `createPlan(taskId: string, context?: Record<string, unknown>): Promise<Plan>` plus `refreshTask(taskId: string): Promise<void>`. `createAgentTask` performs exactly: `api.createTask` -> receive `task.id` -> `api.createPlan(task.id)` -> refresh detail/report/pending Approvals. It must not call execute. `refreshTask` reads detail/report/pending Approvals without mutating the backend.
+**Real Approval contract:** `backend/app/api/routes/approvals.py` exposes `POST /tasks/{task_id}/approval`. Request body is `{ plan_id: string; plan_version: number; requested_by: string }` from `ApprovalCreate`; response is `ApprovalRead` with `id`, `task_id`, `plan_id`, `plan_version`, `decision`, `approver`, `reason`, `resolved_snapshot`, and `created_at`. `ApprovalService.create_request` validates Task/Plan binding and version, requires Task status `PLANNING`, `WAITING_APPROVAL`, or `RUNNING`, snapshots the resolved Plan/Project authority, transitions PLANNING/RUNNING to WAITING_APPROVAL, persists `PENDING`, and audits `APPROVAL_CREATED`. An active PENDING or APPROVED Approval for the same Task/Plan causes an ApprovalError and HTTP 400; creation is therefore not idempotent and must be called at most once by this orchestration. Replanning creates the successor Approval inside `ReplanningService` after Plan v2 persistence, so the frontend must discover it and must not create a duplicate.
 
-- [ ] Write RED tests for exact Project/Goal payload, one Task create call, then exactly one `/tasks/{task_id}/plan` call using the returned Task ID, real Plan response, authoritative detail/Approval refresh, and network/provider/400 planning failure retaining the created Task without fabricating Plan or Approval. Assert create failure never calls `/plan`, wrong Task IDs are impossible, and successful planning still makes zero execute calls before Approval.
-- [ ] Run `cd frontend; npx vitest run src/hooks/useOperations.agent.test.tsx`; expect RED because callbacks are absent.
-- [ ] Implement composition over `api.createTask`, `api.createPlan`, `api.getTaskDetail`, `api.getReport`, and `api.getPendingApprovals`; expose transient Planning only while `/plan` is unresolved. A `/plan` failure shows truthful request/backend error and leaves Plan/Approval absent; do not add a facade endpoint, replicate validation/resolution, or make a direct execution call.
+**Interfaces:** Preserve existing hook exports. Add `createAgentTask(projectId: string, goal: string): Promise<TaskSummary>`, `createPlan(taskId: string, context?: Record<string, unknown>): Promise<Plan>`, `createApproval(taskId: string, planId: string, planVersion: number): Promise<Approval>`, and `refreshTask(taskId: string): Promise<void>`. `createAgentTask` performs exactly: `api.createTask` -> receive `task.id` -> `api.createPlan(task.id)` -> `api.createApproval(task.id, plan.id, plan.version)` -> refresh detail/report/pending Approvals. It must not call execute. `refreshTask` reads detail/report/pending Approvals without mutating the backend.
+
+- [ ] Write RED tests for exact Project/Goal payload, one Task create call, then exactly one `/tasks/{task_id}/plan` call using the returned Task ID, real Plan response, exactly one `/tasks/{task_id}/approval` call using the returned Plan ID/version, authoritative pending Approval refresh, and network/provider/400 planning failure retaining the created Task without creating Approval. Assert create failure never calls `/plan`, planning failure never calls `/approval`, wrong Task IDs/Plan versions are impossible, Approval creation failure never calls execute, and successful planning/Approval creation still makes zero execute calls before HUMAN approval.
+- [ ] Run `cd frontend; npx vitest run src/hooks/useOperations.agent.test.tsx`; expect RED because the full orchestration callbacks are absent.
+- [ ] Implement composition over `api.createTask`, `api.createPlan`, `api.createApproval`, `api.getTaskDetail`, `api.getReport`, and `api.getPendingApprovals`; expose transient Planning while the real `/plan` and required `/approval` sequence is unresolved. A `/plan` failure shows truthful request/backend error and leaves Plan/Approval absent; an `/approval` failure shows the real error and does not execute. Do not add a facade endpoint, replicate validation/resolution, or make a direct execution call. Do not call `createApproval` for a successor Plan when authoritative refresh already shows the ReplanningService-created Approval.
 - [ ] Run `cd frontend; npx vitest run src/hooks/useOperations.agent.test.tsx src/pages/AgentWorkspace.test.tsx src/api/client.plan.test.ts`; expect GREEN.
 - [ ] Commit `git add frontend/src/hooks/useOperations.ts frontend/src/api/client.ts frontend/src/types/index.ts frontend/src/hooks/useOperations.agent.test.tsx frontend/src/pages/AgentWorkspace.test.tsx; git commit -m "feat: compose agent task lifecycle state"`.
 
@@ -143,8 +145,8 @@
 
 **Files:** Modify `frontend/src/pages/AgentWorkspace.test.tsx`, `frontend/src/agent/timeline.test.ts`, `frontend/src/agent/polling.test.ts`, and `frontend/src/hooks/useOperations.agent.test.tsx`.
 
-- [ ] Add RED fixtures/tests for planner/provider failure, invalid Plan, resolver failure, rejected Approval, execute failure, semantic Tool failure, Replan/step limits, Replan provider failure, terminal failure, refresh/report failure, and active navigation. The planning failures must assert no fake `PLAN_CREATED`/`WAITING_APPROVAL`, no Approval, and zero execute calls.
-- [ ] Add a remount test that discards React timeline state, reloads existing detail/audit/report/Approval responses, and reconstructs equivalent meaningful entries. Add a Replan fixture proving v1 Approval is not reused and v2 pending Approval is shown.
+- [ ] Add RED fixtures/tests for planner/provider failure, invalid Plan, resolver failure, Approval creation failure, rejected Approval, pending Approval, approved HUMAN action, execute failure, semantic Tool failure, Replan/step limits, Replan provider failure, terminal failure, refresh/report failure, and active navigation. Planning failures must assert no fake `PLAN_CREATED`/`WAITING_APPROVAL`, no Approval, and zero execute calls; Approval creation failure must also block execute.
+- [ ] Add a remount test that discards React timeline state, reloads existing detail/audit/report/Approval responses, and reconstructs equivalent meaningful entries. Add a Replan fixture proving ReplanningService-created v2 Approval is discovered, v1 Approval is not reused, and v2 pending Approval is shown.
 - [ ] Run `cd frontend; npx vitest run src/pages/AgentWorkspace.test.tsx src/agent/timeline.test.ts src/agent/polling.test.ts src/hooks/useOperations.agent.test.tsx`; expect RED before handling is implemented.
 - [ ] Implement bounded refresh-error UI that retains last known authoritative state, resumes active polling after remount, selects highest persisted Plan version deterministically, and stops at fresh Approval for a successor.
 - [ ] Run the same command; expect GREEN.
@@ -168,7 +170,8 @@
 - [ ] All paths and APIs named above exist in the current repository or are explicitly new frontend files.
 - [ ] No placeholder or silent backend endpoint expansion exists.
 - [ ] Timeline source, timestamp, ordering, and failure rules are explicit.
-- [ ] Every lifecycle arrow is covered: Project + Goal -> Task -> real planning endpoint -> Planner/Validation/Resolver -> Plan -> Approval -> governed Execute -> ToolExecution/Observation -> Replan/fresh Approval -> Evidence -> Report.
+- [ ] Every lifecycle arrow is covered: Project + Goal -> Task -> real planning endpoint -> Planner/Validation/Resolver -> explicit Approval creation/existence -> HUMAN Approval -> governed Execute -> ToolExecution/Observation -> Replan/successor Plan/fresh Approval -> Evidence -> Report.
+- [ ] Approval creation is one authoritative mechanism: explicit frontend call for the initial Plan, ReplanningService-created Approval for successor Plans, and no fabricated frontend Approval state.
 - [ ] Planning API request/response/error contract and exact Task ID propagation are explicit.
 - [ ] Transient Planning is separate from persisted timeline records.
 - [ ] Fresh successor Approval, reload reconstruction, terminal polling stop, raw-content preservation, and no-CoT tests are explicit.
