@@ -42,6 +42,17 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     expect(apiMock.executeTask).not.toHaveBeenCalled()
   })
 
+  it('does not let a polling refresh cancel Task creation before planning', async () => {
+    let releaseTask!: (value: typeof task) => void
+    apiMock.createTask.mockReturnValueOnce(new Promise(resolve => { releaseTask = resolve }))
+    const { result } = renderHook(() => useOperations())
+    let creation!: Promise<unknown>
+    await act(async () => { creation = result.current.createAgentTask('project-1', 'RAW GOAL'); await Promise.resolve() })
+    await act(async () => { void result.current.refresh(); await Promise.resolve(); releaseTask(task) })
+    await waitFor(() => expect(apiMock.createPlan).toHaveBeenCalledWith('task-1'))
+    await act(async () => { await creation })
+  })
+
   it('does not duplicate an authoritative matching Approval', async () => {
     apiMock.getTaskDetail.mockResolvedValue(detail)
     const { result } = renderHook(() => useOperations())

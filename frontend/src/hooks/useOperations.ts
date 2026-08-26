@@ -57,8 +57,8 @@ export function useOperations() {
   const providerStatusRequestId = useRef(0)
   const [actionError, setActionError] = useState<string | null>(null)
   const selectedIdRef = useRef(selectedId)
-  const agentSelectionLocked = useRef(Boolean(selectedId))
-  const agentRequestGeneration = useRef(0)
+  const readRequestGeneration = useRef(0)
+  const agentCreateInFlight = useRef(false)
   const executionInFlight = useRef(false)
   useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
   const selectAgentTask = useCallback((id: string | undefined) => {
@@ -72,13 +72,13 @@ export function useOperations() {
   }, [])
 
   const refreshTask = useCallback(async (id: string) => {
-    const generation = ++agentRequestGeneration.current
+    const generation = ++readRequestGeneration.current
     const [nextDetail, nextReport, nextApprovals] = await Promise.all([
       api.getTaskDetail(id),
       api.getReport(id),
       api.getPendingApprovals(),
     ])
-    if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return undefined
+    if (generation !== readRequestGeneration.current || selectedIdRef.current !== id) return undefined
     selectAgentTask(id)
     setDetail(nextDetail)
     setReport(nextReport)
@@ -88,11 +88,11 @@ export function useOperations() {
   }, [selectAgentTask])
 
   const refresh = useCallback(async () => {
-    const generation = ++agentRequestGeneration.current
+    const generation = ++readRequestGeneration.current
     const requestedId = selectedIdRef.current
     try {
       const [nextTasks, nextApprovals, nextProjects] = await Promise.all([api.listTasks(), api.getPendingApprovals(), api.listProjects()])
-      if (generation !== agentRequestGeneration.current || selectedIdRef.current !== requestedId) return
+      if (generation !== readRequestGeneration.current || selectedIdRef.current !== requestedId) return
       setTasks(nextTasks); setApprovals(nextApprovals); setProjects(nextProjects)
       const id = requestedId ?? nextTasks[0]?.id
       if (!id) {
@@ -101,19 +101,19 @@ export function useOperations() {
       }
       try {
         const [nextDetail, nextReport] = await Promise.all([api.getTaskDetail(id), api.getReport(id)])
-        if (generation !== agentRequestGeneration.current || (requestedId && selectedIdRef.current !== requestedId)) return
+        if (generation !== readRequestGeneration.current || (requestedId && selectedIdRef.current !== requestedId)) return
         setDetail(nextDetail); setReport(nextReport)
       } catch {
         if (!requestedId) {
           setLive(true)
           return
         }
-        if (generation !== agentRequestGeneration.current || selectedIdRef.current !== requestedId) return
+        if (generation !== readRequestGeneration.current || selectedIdRef.current !== requestedId) return
         selectAgentTask(undefined)
       }
       setLive(true)
     } catch (error) {
-      if (generation !== agentRequestGeneration.current) return
+      if (generation !== readRequestGeneration.current) return
       setLive(false)
     }
   }, [])
@@ -138,13 +138,12 @@ export function useOperations() {
   }
 
   async function createAgentTask(projectId: string, goal: string): Promise<TaskSummary> {
-    const generation = ++agentRequestGeneration.current
+    if (agentCreateInFlight.current) throw new Error('Agent creation is already in progress.')
+    agentCreateInFlight.current = true
     setAgentPlanning(true)
     setAgentError(null)
     try {
       const created = await api.createTask({ project_id: projectId, title: 'Repository Analyst Agent', goal })
-      if (generation !== agentRequestGeneration.current) throw new Error('Agent run selection changed.')
-      agentSelectionLocked.current = true
       selectAgentTask(created.id)
       const plan = await api.createPlan(created.id)
       let authoritativeDetail = await api.getTaskDetail(created.id)
@@ -165,6 +164,7 @@ export function useOperations() {
       setAgentError(message)
       throw error
     } finally {
+      agentCreateInFlight.current = false
       setAgentPlanning(false)
     }
   }
@@ -186,14 +186,14 @@ export function useOperations() {
   }
 
   async function chooseTask(id: string) {
-    const generation = ++agentRequestGeneration.current
+    const generation = ++readRequestGeneration.current
     selectAgentTask(id)
     try {
       const [nextDetail, nextReport] = await Promise.all([api.getTaskDetail(id), api.getReport(id)])
-      if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return
+      if (generation !== readRequestGeneration.current || selectedIdRef.current !== id) return
       setDetail(nextDetail); setReport(nextReport); setLive(true)
     } catch {
-      if (generation === agentRequestGeneration.current && selectedIdRef.current === id && id === demoTask.id) { setDetail(demoDetail); setReport({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 2, execution_count: 0 }) }
+      if (generation === readRequestGeneration.current && selectedIdRef.current === id && id === demoTask.id) { setDetail(demoDetail); setReport({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 2, execution_count: 0 }) }
     }
   }
 
