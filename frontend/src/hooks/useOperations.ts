@@ -71,14 +71,15 @@ export function useOperations() {
     } catch { /* storage is optional */ }
   }, [])
 
-  const refreshTask = useCallback(async (id: string) => {
+  const refreshTask = useCallback(async (id: string, forContinuation = false) => {
     const generation = ++readRequestGeneration.current
     const [nextDetail, nextReport, nextApprovals] = await Promise.all([
       api.getTaskDetail(id),
       api.getReport(id),
       api.getPendingApprovals(),
     ])
-    if (generation !== readRequestGeneration.current || selectedIdRef.current !== id) return undefined
+    if (!forContinuation && (generation !== readRequestGeneration.current || selectedIdRef.current !== id)) return undefined
+    if (selectedIdRef.current !== id && forContinuation) return nextDetail
     selectAgentTask(id)
     setDetail(nextDetail)
     setReport(nextReport)
