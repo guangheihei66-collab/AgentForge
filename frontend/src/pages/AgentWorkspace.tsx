@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { Bot, Play } from 'lucide-react'
-import type { ApprovalQueueItem, ProjectSummary, TaskDetail, TaskSummary } from '../types'
+import type { ApprovalQueueItem, ProjectSummary, Report, TaskDetail, TaskSummary } from '../types'
 import { useAgentTaskPolling } from '../agent/polling'
 import { AgentApprovalCard } from '../components/AgentApprovalCard'
 import { AgentPlanCard } from '../components/AgentPlanCard'
+import { buildAgentTimeline } from '../agent/timeline'
+import { AgentTimeline } from '../components/AgentTimeline'
 
-export function AgentWorkspace({ projects, planning, error, onStart, approvals = [], task, detail, onRefreshTask, onApprove, onReject }: {
+export function AgentWorkspace({ projects, planning, error, onStart, approvals = [], task, detail, report, onRefreshTask, onApprove, onReject }: {
   projects: ProjectSummary[]
   planning: boolean
   error: string | null
@@ -13,6 +15,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
   approvals?: ApprovalQueueItem[]
   task?: TaskSummary
   detail?: TaskDetail
+  report?: Report
   onRefreshTask?: (taskId: string) => Promise<void>
   onApprove?: (approvalId: string) => Promise<void>
   onReject?: (approvalId: string, reason: string) => Promise<void>
@@ -28,6 +31,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
     try { await onStart(projectId, goal) } finally { setSubmitting(false) }
   }
   const currentPlan = detail?.plans.reduce((latest, candidate) => !latest || candidate.version > latest.version ? candidate : latest, undefined as TaskDetail['plans'][number] | undefined)
+  const timeline = detail && report ? buildAgentTimeline({ detail, report, pendingApproval: approvals[0], transientPlanning: planning }) : []
   return <section className="page-stack">
     <div className="page-heading"><div><div className="eyebrow">REPOSITORY ANALYST AGENT</div><h2>Agent workspace</h2><p>Perform governed repository analysis with human approval.</p></div><Bot size={30} /></div>
     <form className="panel" onSubmit={submit}>
@@ -40,6 +44,6 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
     </form>
     {currentPlan && <AgentPlanCard plan={currentPlan} rawGoal={detail?.task.goal ?? ''} />}
     {approvals[0] && onApprove && onReject && <AgentApprovalCard item={approvals[0]} onApprove={onApprove} onReject={onReject} />}
-    {!currentPlan && !planning && <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div>}
+    {detail && report ? <AgentTimeline entries={timeline} /> : !planning && <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div>}
   </section>
 }
