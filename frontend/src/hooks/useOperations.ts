@@ -57,6 +57,7 @@ export function useOperations() {
   const providerStatusRequestId = useRef(0)
   const [actionError, setActionError] = useState<string | null>(null)
   const selectedIdRef = useRef(selectedId)
+  const agentSelectionLocked = useRef(Boolean(selectedId))
   const agentRequestGeneration = useRef(0)
   useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
   const selectAgentTask = useCallback((id: string | undefined) => {
@@ -91,7 +92,7 @@ export function useOperations() {
       const [nextTasks, nextApprovals, nextProjects] = await Promise.all([api.listTasks(), api.getPendingApprovals(), api.listProjects()])
       if (generation !== agentRequestGeneration.current || selectedIdRef.current !== requestedId) return
       setTasks(nextTasks); setApprovals(nextApprovals); setProjects(nextProjects)
-      const id = requestedId
+      const id = requestedId ?? (agentSelectionLocked.current ? undefined : nextTasks[0]?.id)
       if (id) {
         const [nextDetail, nextReport] = await Promise.all([api.getTaskDetail(id), api.getReport(id)])
         if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return
@@ -122,6 +123,7 @@ export function useOperations() {
     try {
       const created = await api.createTask({ project_id: projectId, title: 'Repository Analyst Agent', goal })
       if (generation !== agentRequestGeneration.current) throw new Error('Agent run selection changed.')
+      agentSelectionLocked.current = true
       selectAgentTask(created.id)
       const plan = await api.createPlan(created.id)
       let authoritativeDetail = await api.getTaskDetail(created.id)
