@@ -92,11 +92,22 @@ export function useOperations() {
       const [nextTasks, nextApprovals, nextProjects] = await Promise.all([api.listTasks(), api.getPendingApprovals(), api.listProjects()])
       if (generation !== agentRequestGeneration.current || selectedIdRef.current !== requestedId) return
       setTasks(nextTasks); setApprovals(nextApprovals); setProjects(nextProjects)
-      const id = requestedId ?? (agentSelectionLocked.current ? undefined : nextTasks[0]?.id)
-      if (id) {
+      const id = requestedId ?? nextTasks[0]?.id
+      if (!id) {
+        setLive(true)
+        return
+      }
+      try {
         const [nextDetail, nextReport] = await Promise.all([api.getTaskDetail(id), api.getReport(id)])
-        if (generation !== agentRequestGeneration.current || selectedIdRef.current !== id) return
+        if (generation !== agentRequestGeneration.current || (requestedId && selectedIdRef.current !== requestedId)) return
         setDetail(nextDetail); setReport(nextReport)
+      } catch {
+        if (!requestedId) {
+          setLive(true)
+          return
+        }
+        if (generation !== agentRequestGeneration.current || selectedIdRef.current !== requestedId) return
+        selectAgentTask(undefined)
       }
       setLive(true)
     } catch (error) {

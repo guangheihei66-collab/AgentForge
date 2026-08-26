@@ -93,6 +93,26 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     expect(apiMock.getTaskDetail).toHaveBeenCalledWith('task-1')
   })
 
+  it('marks clean Agent state live without selecting historical task data', async () => {
+    apiMock.listTasks.mockResolvedValue([{ ...task, id: 'historical-task' }])
+    const { result } = renderHook(() => useOperations())
+    await waitFor(() => expect(result.current.live).toBe(true))
+    expect(result.current.selectedId).toBeUndefined()
+    expect(result.current.projects).toEqual([project])
+    expect(apiMock.getTaskDetail).toHaveBeenCalledWith('historical-task')
+  })
+
+  it('clears an invalid restored Agent task while keeping base data live', async () => {
+    storage.set('agentforge.agent.currentTaskId', 'missing-task')
+    apiMock.getTaskDetail.mockRejectedValueOnce(new Error('Task not found'))
+    apiMock.getReport.mockRejectedValueOnce(new Error('Task not found'))
+    const { result } = renderHook(() => useOperations())
+    await waitFor(() => expect(result.current.live).toBe(true))
+    expect(result.current.selectedId).toBeUndefined()
+    expect(globalThis.localStorage.getItem('agentforge.agent.currentTaskId')).toBeNull()
+    expect(result.current.projects).toEqual([project])
+  })
+
   it('recovers live authoritative data after an initial read failure without creating anything', async () => {
     apiMock.listTasks.mockRejectedValueOnce(new Error('backend unavailable')).mockResolvedValue([])
     apiMock.listProjects.mockRejectedValueOnce(new Error('backend unavailable')).mockResolvedValue([project])
