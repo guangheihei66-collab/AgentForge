@@ -1,15 +1,18 @@
 import { useState, type FormEvent } from 'react'
-import { ArrowRight, Bot, Play } from 'lucide-react'
-import type { ApprovalQueueItem, ProjectSummary, TaskSummary } from '../types'
+import { Bot, Play } from 'lucide-react'
+import type { ApprovalQueueItem, ProjectSummary, TaskDetail, TaskSummary } from '../types'
 import { useAgentTaskPolling } from '../agent/polling'
+import { AgentApprovalCard } from '../components/AgentApprovalCard'
+import { AgentPlanCard } from '../components/AgentPlanCard'
 
-export function AgentWorkspace({ projects, planning, error, onStart, approvals = [], task, onRefreshTask, onApprove, onReject }: {
+export function AgentWorkspace({ projects, planning, error, onStart, approvals = [], task, detail, onRefreshTask, onApprove, onReject }: {
   projects: ProjectSummary[]
   planning: boolean
   error: string | null
   onStart: (projectId: string, goal: string) => Promise<void>
   approvals?: ApprovalQueueItem[]
   task?: TaskSummary
+  detail?: TaskDetail
   onRefreshTask?: (taskId: string) => Promise<void>
   onApprove?: (approvalId: string) => Promise<void>
   onReject?: (approvalId: string, reason: string) => Promise<void>
@@ -24,6 +27,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
     setSubmitting(true)
     try { await onStart(projectId, goal) } finally { setSubmitting(false) }
   }
+  const currentPlan = detail?.plans.reduce((latest, candidate) => !latest || candidate.version > latest.version ? candidate : latest, undefined as TaskDetail['plans'][number] | undefined)
   return <section className="page-stack">
     <div className="page-heading"><div><div className="eyebrow">REPOSITORY ANALYST AGENT</div><h2>Agent workspace</h2><p>Perform governed repository analysis with human approval.</p></div><Bot size={30} /></div>
     <form className="panel" onSubmit={submit}>
@@ -34,6 +38,8 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
       {error && <div className="form-message" role="alert">{error}</div>}
       {polling.refreshError && <div className="form-message" role="status">Unable to refresh Agent status: {polling.refreshError}</div>}
     </form>
-    <div className="content-grid dashboard-grid"><div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div><div className="panel"><div className="panel-title"><h3>Approval</h3><span>{approvals.length ? `${approvals.length} pending` : 'No pending approval'}</span></div>{approvals.map(item => <div key={item.id}><strong>{item.task_title}</strong><span>Plan v{item.plan_version}</span><button className="text-button" onClick={() => onApprove?.(item.approval_id ?? item.id)}>Approve <ArrowRight size={14} /></button><button className="text-button" onClick={() => onReject?.(item.approval_id ?? item.id, 'Plan requires operator changes')}>Reject</button></div>)}</div></div>
+    {currentPlan && <AgentPlanCard plan={currentPlan} rawGoal={detail?.task.goal ?? ''} />}
+    {approvals[0] && onApprove && onReject && <AgentApprovalCard item={approvals[0]} onApprove={onApprove} onReject={onReject} />}
+    {!currentPlan && !planning && <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div>}
   </section>
 }
