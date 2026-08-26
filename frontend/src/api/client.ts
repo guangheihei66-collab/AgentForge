@@ -1,4 +1,4 @@
-import type { ApprovalQueueItem, Approval, Diagnostics, ProjectDetail, ProjectSummary, ProviderStatus, Report, TaskDetail, TaskSummary } from '../types'
+import type { ApprovalQueueItem, Approval, Diagnostics, Plan, ProjectDetail, ProjectSummary, ProviderStatus, Report, TaskDetail, TaskSummary } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
 
@@ -16,10 +16,11 @@ export const api = {
   validateWorkspace: (workspace_root: string) => request<{ valid: true; canonical_workspace_root: string }>('/projects/validate-workspace', { method: 'POST', body: JSON.stringify({ workspace_root }) }),
   archiveProject: (id: string, expected_config_version: number) => request<ProjectSummary>(`/projects/${id}/archive`, { method: 'POST', body: JSON.stringify({ expected_config_version }) }),
   createTask: (payload: { project_id: string; title: string; goal: string }) => request<TaskSummary>('/tasks', { method: 'POST', body: JSON.stringify(payload) }),
+  createPlan: (taskId: string, context: Record<string, unknown> = {}) => request<Plan>(`/tasks/${taskId}/plan`, { method: 'POST', body: JSON.stringify({ context }) }),
+  createApproval: (taskId: string, planId: string, planVersion: number) => request<Approval>(`/tasks/${taskId}/approval`, { method: 'POST', body: JSON.stringify({ plan_id: planId, plan_version: planVersion, requested_by: 'operator' }) }),
   listTasks: () => request<TaskSummary[]>('/tasks'),
   getTaskDetail: (id: string) => request<TaskDetail>(`/tasks/${id}/detail`),
   getPendingApprovals: () => request<ApprovalQueueItem[]>('/approvals/pending'),
-  createApproval: (taskId: string, planId: string, planVersion: number) => request<Approval>(`/tasks/${taskId}/approval`, { method: 'POST', body: JSON.stringify({ plan_id: planId, plan_version: planVersion, requested_by: 'operator' }) }),
   getReport: (id: string) => request<Report>(`/tasks/${id}/report`),
   getProviderStatus: () => request<ProviderStatus>('/llm/provider'),
   testProviderConnection: () => request<ProviderStatus>('/llm/provider/test', { method: 'POST' }),
