@@ -18,7 +18,7 @@ describe('Agent approval-to-execution wiring', () => {
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage })
     Object.defineProperty(window, 'localStorage', { configurable: true, value: storage })
     vi.spyOn(api, 'listTasks').mockResolvedValue([task])
-    vi.spyOn(api, 'getPendingApprovals').mockResolvedValue([pending])
+    vi.spyOn(api, 'getPendingApprovals').mockImplementation(async () => approved ? [] : [pending])
     vi.spyOn(api, 'listProjects').mockResolvedValue([project])
     vi.spyOn(api, 'getProviderStatus').mockResolvedValue({ provider: 'mock', model: 'deterministic-mock', configured: true, credential_configured: false, connection_status: 'not tested' })
     vi.spyOn(api, 'getReport').mockResolvedValue({ task, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 0, execution_count: 0 })

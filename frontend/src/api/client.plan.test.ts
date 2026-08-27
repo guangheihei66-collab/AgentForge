@@ -27,4 +27,18 @@ describe('Agent planning and initial approval API', () => {
       body: JSON.stringify({ plan_id: 'plan-1', plan_version: 1, requested_by: 'operator' }),
     }))
   })
+
+  it('preserves approved authority when Task Detail omits Approval plan_version', async () => {
+    const detail = {
+      task: { id: 'task-1' },
+      plans: [{ id: 'plan-1', version: 1 }],
+      approvals: [{ id: 'approval-1', plan_id: 'plan-1', plan_version: null, decision: 'APPROVED' }],
+      executions: [], evidence: [], audit: [],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => detail }))
+
+    await expect(api.getTaskDetail('task-1')).resolves.toMatchObject({
+      approvals: [{ id: 'approval-1', plan_id: 'plan-1', plan_version: 1, decision: 'APPROVED' }],
+    })
+  })
 })

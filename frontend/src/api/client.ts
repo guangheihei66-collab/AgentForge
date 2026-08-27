@@ -8,6 +8,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+function normalizeTaskDetail(detail: TaskDetail): TaskDetail {
+  return {
+    ...detail,
+    approvals: detail.approvals.map((approval) => {
+      if (approval.plan_version != null) return approval
+      const plan = detail.plans.find(candidate => candidate.id === approval.plan_id)
+      return plan ? { ...approval, plan_version: plan.version } : approval
+    }),
+  }
+}
+
 export const api = {
   listProjects: () => request<ProjectSummary[]>('/projects'),
   getProject: (id: string) => request<ProjectDetail>(`/projects/${id}`),
@@ -20,7 +31,7 @@ export const api = {
   createApproval: (taskId: string, planId: string, planVersion: number) => request<Approval>(`/tasks/${taskId}/approval`, { method: 'POST', body: JSON.stringify({ plan_id: planId, plan_version: planVersion, requested_by: 'operator' }) }),
   executeTask: (taskId: string) => request<TaskSummary>(`/tasks/${taskId}/execute`, { method: 'POST' }),
   listTasks: () => request<TaskSummary[]>('/tasks'),
-  getTaskDetail: (id: string) => request<TaskDetail>(`/tasks/${id}/detail`),
+  getTaskDetail: (id: string) => request<TaskDetail>(`/tasks/${id}/detail`).then(normalizeTaskDetail),
   getPendingApprovals: () => request<ApprovalQueueItem[]>('/approvals/pending'),
   getReport: (id: string) => request<Report>(`/tasks/${id}/report`),
   getProviderStatus: () => request<ProviderStatus>('/llm/provider'),
