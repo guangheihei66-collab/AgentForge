@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useOperations } from './useOperations'
+import type { ApprovalQueueItem } from '../types'
 
 const apiMock = vi.hoisted(() => ({
   listTasks: vi.fn(), getPendingApprovals: vi.fn(), listProjects: vi.fn(), getTaskDetail: vi.fn(), getReport: vi.fn(), getProviderStatus: vi.fn(), createTask: vi.fn(), createPlan: vi.fn(), createApproval: vi.fn(), approve: vi.fn(), reject: vi.fn(), executeTask: vi.fn(), approveAndExecuteTask: vi.fn(),
@@ -9,11 +10,12 @@ vi.mock('../api/client', () => ({ api: apiMock }))
 
 const project = { id: 'project-1', name: 'AgentForge', description: null, workspace_root: 'D:/AgentForge', environment: 'development', status: 'ACTIVE', allowed_capability_ids: ['repository_state'], config_version: 1, recent_task_count: 0, created_at: '2026-08-26T10:00:00Z', updated_at: '2026-08-26T10:00:00Z' }
 const task = { id: 'task-1', project_id: 'project-1', title: 'Repository Analyst Agent', goal: 'RAW GOAL', workspace: 'D:/AgentForge', status: 'WAITING_APPROVAL', created_at: '2026-08-26T10:00:00Z', updated_at: '2026-08-26T10:00:00Z' }
-const plan = { id: 'plan-1', task_id: 'task-1', version: 1, validation_status: 'VALID', created_at: '2026-08-26T10:00:01Z', plan_json: { schema_version: 2, steps: [], resolved_steps: [], project_authority: {} } }
-const approval = { id: 'approval-1', task_id: 'task-1', plan_id: 'plan-1', plan_version: 1, decision: 'PENDING', approver: 'pending', reason: null, resolved_snapshot: {}, created_at: '2026-08-26T10:00:02Z' }
+const authority = { project_id: 'project-1', config_version: 1, authority_fingerprint: 'authority', canonical_workspace_root: 'D:/AgentForge' }
+const plan = { id: 'plan-1', task_id: 'task-1', version: 1, validation_status: 'VALID', created_at: '2026-08-26T10:00:01Z', plan_json: { schema_version: 2 as const, steps: [], resolved_steps: [], project_authority: authority } }
+const approval = { id: 'approval-1', task_id: 'task-1', plan_id: 'plan-1', plan_version: 1, decision: 'PENDING', approver: 'pending', reason: null, resolved_snapshot: { schema_version: 2 as const, project_authority: authority, steps: [] }, created_at: '2026-08-26T10:00:02Z' }
 const detail = { task, plans: [plan], approvals: [approval], executions: [], evidence: [], audit: [] }
 const report = { task, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 0, execution_count: 0 }
-const queueItem = { id: 'approval-1', approval_id: 'approval-1', task_id: 'task-1', task_title: task.title, plan_id: 'plan-1', plan_version: 1, decision: 'PENDING', requested_by: 'operator', created_at: '2026-08-26T10:00:02Z', plan_json: plan.plan_json, resolved_snapshot: {} }
+const queueItem: ApprovalQueueItem = { id: 'approval-1', approval_id: 'approval-1', task_id: 'task-1', task_title: task.title, plan_id: 'plan-1', plan_version: 1, decision: 'PENDING', requested_by: 'operator', created_at: '2026-08-26T10:00:02Z', plan_json: plan.plan_json, resolved_snapshot: { schema_version: 2, project_authority: authority, steps: [] } }
 
 describe('Agent Task -> Plan -> Approval orchestration', () => {
   const storage = new Map<string, string>()
