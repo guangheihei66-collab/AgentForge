@@ -1,4 +1,4 @@
-import type { ApprovalQueueItem, Approval, Diagnostics, Plan, ProjectDetail, ProjectSummary, ProviderStatus, Report, TaskDetail, TaskSummary } from '../types'
+import type { AgentApprovalCommand, ApprovalQueueItem, Approval, Diagnostics, Plan, ProjectDetail, ProjectSummary, ProviderStatus, Report, RuntimeResult, TaskDetail, TaskSummary } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
 
@@ -29,6 +29,7 @@ export const api = {
   createTask: (payload: { project_id: string; title: string; goal: string }) => request<TaskSummary>('/tasks', { method: 'POST', body: JSON.stringify(payload) }),
   createPlan: (taskId: string, context: Record<string, unknown> = {}) => request<Plan>(`/tasks/${taskId}/plan`, { method: 'POST', body: JSON.stringify({ context }) }),
   createApproval: (taskId: string, planId: string, planVersion: number) => request<Approval>(`/tasks/${taskId}/approval`, { method: 'POST', body: JSON.stringify({ plan_id: planId, plan_version: planVersion, requested_by: 'operator' }) }),
+  approveAndExecuteTask: (taskId: string, command: AgentApprovalCommand) => request<RuntimeResult>(`/tasks/${taskId}/approve-and-execute`, { method: 'POST', body: JSON.stringify(command) }),
   executeTask: (taskId: string) => request<TaskSummary>(`/tasks/${taskId}/execute`, { method: 'POST' }),
   listTasks: () => request<TaskSummary[]>('/tasks'),
   getTaskDetail: (id: string) => request<TaskDetail>(`/tasks/${id}/detail`).then(normalizeTaskDetail),

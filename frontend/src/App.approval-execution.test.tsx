@@ -23,21 +23,30 @@ describe('Agent approval-to-execution wiring', () => {
     vi.spyOn(api, 'getProviderStatus').mockResolvedValue({ provider: 'mock', model: 'deterministic-mock', configured: true, credential_configured: false, connection_status: 'not tested' })
     vi.spyOn(api, 'getReport').mockResolvedValue({ task, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 0, execution_count: 0 })
     vi.spyOn(api, 'getTaskDetail').mockImplementation(async (): Promise<TaskDetail> => ({ task: approved ? { ...task, status: 'RUNNING' } : task, plans: [plan], approvals: [{ ...pending, approver: 'operator', decision: approved ? 'APPROVED' : 'PENDING' }], executions: [], evidence: [], audit: [] }))
-    vi.spyOn(api, 'approve').mockImplementation(async () => { approved = true; return { ...pending, decision: 'APPROVED' } })
+    vi.spyOn(api, 'approve').mockResolvedValue({ ...pending, decision: 'APPROVED' })
+    vi.spyOn(api, 'approveAndExecuteTask').mockImplementation(async () => {
+      approved = true
+      return { task_id: task.id, plan_id: plan.id, plan_version: plan.version, state: 'COMPLETED', decision: 'COMPLETE', completed_steps: 1, observations: [], successor_plan_id: null, successor_plan_version: null, approval_id: null }
+    })
     vi.spyOn(api, 'executeTask').mockResolvedValue({ ...task, status: 'RUNNING' })
   })
 
   afterEach(() => vi.restoreAllMocks())
 
-  it('approves the matching current plan before executing it exactly once', async () => {
+  it('sends one bound approval-and-execute command from the Agent Workspace', async () => {
     render(<App />)
     fireEvent.click((await screen.findAllByText(task.title))[0])
     fireEvent.click(screen.getByRole('button', { name: 'Agent' }))
     await waitFor(() => expect(api.getTaskDetail).toHaveBeenCalledWith(task.id))
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
-    await waitFor(() => expect(api.executeTask).toHaveBeenCalledTimes(1))
-    expect(api.approve).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(api.approve).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.executeTask).mock.invocationCallOrder[0])
-    expect(api.executeTask).toHaveBeenCalledWith(task.id)
+    await waitFor(() => expect(api.approveAndExecuteTask).toHaveBeenCalledTimes(1))
+    expect(api.approve).not.toHaveBeenCalled()
+    expect(api.executeTask).not.toHaveBeenCalled()
+    expect(api.approveAndExecuteTask).toHaveBeenCalledWith(task.id, {
+      approval_id: 'approval-1',
+      plan_id: 'plan-1',
+      plan_version: 1,
+      actor: 'operator',
+    })
   })
 })

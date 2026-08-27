@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useOperations } from './useOperations'
 
 const apiMock = vi.hoisted(() => ({
-  listTasks: vi.fn(), getPendingApprovals: vi.fn(), listProjects: vi.fn(), getTaskDetail: vi.fn(), getReport: vi.fn(), getProviderStatus: vi.fn(), createTask: vi.fn(), createPlan: vi.fn(), createApproval: vi.fn(), executeTask: vi.fn(),
+  listTasks: vi.fn(), getPendingApprovals: vi.fn(), listProjects: vi.fn(), getTaskDetail: vi.fn(), getReport: vi.fn(), getProviderStatus: vi.fn(), createTask: vi.fn(), createPlan: vi.fn(), createApproval: vi.fn(), approve: vi.fn(), reject: vi.fn(), executeTask: vi.fn(), approveAndExecuteTask: vi.fn(),
 }))
 vi.mock('../api/client', () => ({ api: apiMock }))
 
@@ -13,6 +13,7 @@ const plan = { id: 'plan-1', task_id: 'task-1', version: 1, validation_status: '
 const approval = { id: 'approval-1', task_id: 'task-1', plan_id: 'plan-1', plan_version: 1, decision: 'PENDING', approver: 'pending', reason: null, resolved_snapshot: {}, created_at: '2026-08-26T10:00:02Z' }
 const detail = { task, plans: [plan], approvals: [approval], executions: [], evidence: [], audit: [] }
 const report = { task, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 0, execution_count: 0 }
+const queueItem = { id: 'approval-1', approval_id: 'approval-1', task_id: 'task-1', task_title: task.title, plan_id: 'plan-1', plan_version: 1, decision: 'PENDING', requested_by: 'operator', created_at: '2026-08-26T10:00:02Z', plan_json: plan.plan_json, resolved_snapshot: {} }
 
 describe('Agent Task -> Plan -> Approval orchestration', () => {
   const storage = new Map<string, string>()
@@ -85,6 +86,59 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL') })
     await act(async () => { await result.current.executeAgentTask() })
     expect(apiMock.executeTask).toHaveBeenCalledWith('task-1')
+  })
+
+  it('uses one composite command and never starts Agent execution through the old two-hop APIs', async () => {
+    storage.set('agentforge.agent.currentTaskId', 'task-1')
+    apiMock.getTaskDetail.mockResolvedValue(detail)
+    apiMock.approveAndExecuteTask.mockResolvedValue({ task_id: 'task-1', plan_id: 'plan-1', plan_version: 1, state: 'COMPLETED', decision: 'COMPLETE', completed_steps: 1, observations: [], successor_plan_id: null, successor_plan_version: null, approval_id: null })
+    const { result } = renderHook(() => useOperations())
+
+    await act(async () => { await result.current.approveAndExecuteAgentTask(queueItem) })
+
+    expect(apiMock.approveAndExecuteTask).toHaveBeenCalledTimes(1)
+    expect(apiMock.approveAndExecuteTask).toHaveBeenCalledWith('task-1', { approval_id: 'approval-1', plan_id: 'plan-1', plan_version: 1, actor: 'operator' })
+    expect(apiMock.approve).not.toHaveBeenCalled()
+    expect(apiMock.executeTask).not.toHaveBeenCalled()
+  })
+
+  it('sends the composite command before a display-only refresh can fail', async () => {
+    storage.set('agentforge.agent.currentTaskId', 'task-1')
+    apiMock.approveAndExecuteTask.mockResolvedValue({ task_id: 'task-1', plan_id: 'plan-1', plan_version: 1, state: 'COMPLETED', decision: 'COMPLETE', completed_steps: 1, observations: [], successor_plan_id: null, successor_plan_version: null, approval_id: null })
+    apiMock.getTaskDetail.mockRejectedValue(new Error('refresh failed'))
+    const { result } = renderHook(() => useOperations())
+
+    await act(async () => { await result.current.approveAndExecuteAgentTask(queueItem).catch(() => undefined) })
+
+    expect(apiMock.approveAndExecuteTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders a safe Agent error when the composite command fails', async () => {
+    storage.set('agentforge.agent.currentTaskId', 'task-1')
+    apiMock.approveAndExecuteTask.mockRejectedValue(new Error('secret provider payload'))
+    const { result } = renderHook(() => useOperations())
+
+    await act(async () => { await result.current.approveAndExecuteAgentTask(queueItem).catch(() => undefined) })
+
+    expect(result.current.agentError).toBe('The Agent could not approve and start execution.')
+    expect(result.current.agentError).not.toContain('secret provider payload')
+  })
+
+  it('does not issue a duplicate composite command while the first is in flight', async () => {
+    storage.set('agentforge.agent.currentTaskId', 'task-1')
+    let release!: (value: unknown) => void
+    apiMock.approveAndExecuteTask.mockReturnValue(new Promise(resolve => { release = resolve }))
+    const { result } = renderHook(() => useOperations())
+    let first!: Promise<void>
+    let second!: Promise<void>
+    await act(async () => {
+      first = result.current.approveAndExecuteAgentTask(queueItem)
+      second = result.current.approveAndExecuteAgentTask(queueItem)
+      release({ task_id: 'task-1', plan_id: 'plan-1', plan_version: 1, state: 'COMPLETED', decision: 'COMPLETE', completed_steps: 1, observations: [], successor_plan_id: null, successor_plan_version: null, approval_id: null })
+      await Promise.all([first, second])
+    })
+
+    expect(apiMock.approveAndExecuteTask).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the newly-created run when the mount list response arrives late', async () => {

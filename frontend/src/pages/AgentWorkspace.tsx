@@ -18,7 +18,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
   detail?: TaskDetail
   report?: Report
   onRefreshTask?: (taskId: string) => Promise<unknown>
-  onApprove?: (approvalId: string) => Promise<void>
+  onApprove?: (item: ApprovalQueueItem) => Promise<void>
   onReject?: (approvalId: string, reason: string) => Promise<void>
   onExecute?: () => Promise<void>
 }) {

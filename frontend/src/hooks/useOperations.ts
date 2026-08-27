@@ -60,6 +60,7 @@ export function useOperations() {
   const readRequestGeneration = useRef(0)
   const agentCreateInFlight = useRef(false)
   const executionInFlight = useRef(false)
+  const agentApprovalInFlight = useRef(false)
   useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
   const selectAgentTask = useCallback((id: string | undefined) => {
     selectedIdRef.current = id
@@ -136,6 +137,42 @@ export function useOperations() {
     setTestingProvider(true)
     providerStatusRequestId.current += 1
     try { setProviderStatus(await api.testProviderConnection()) } finally { setTestingProvider(false) }
+  }
+
+  function agentCommandError(error: unknown): string {
+    const message = error instanceof Error ? error.message : ''
+    if (/approval|plan|authority|stale|approved/i.test(message)) return 'Approval could not be completed because the current Plan authority is stale.'
+    if (/execution initiation/i.test(message)) return 'Approval was recorded, but execution could not be started.'
+    return 'The Agent could not approve and start execution.'
+  }
+
+  async function approveAndExecuteAgentTask(item: ApprovalQueueItem): Promise<void> {
+    if (agentApprovalInFlight.current) return
+    const taskId = selectedId
+    if (!taskId) {
+      setAgentError('No current Agent task is selected.')
+      return
+    }
+    agentApprovalInFlight.current = true
+    setAgentError(null)
+    try {
+      await api.approveAndExecuteTask(taskId, {
+        approval_id: item.approval_id ?? item.id,
+        plan_id: item.plan_id,
+        plan_version: item.plan_version,
+        actor: 'operator',
+      })
+    } catch (error) {
+      setAgentError(agentCommandError(error))
+      return
+    } finally {
+      agentApprovalInFlight.current = false
+    }
+    try {
+      await refreshTask(taskId)
+    } catch {
+      setAgentError('Agent execution started, but the latest status could not be loaded.')
+    }
   }
 
   async function createAgentTask(projectId: string, goal: string): Promise<TaskSummary> {
@@ -244,5 +281,5 @@ export function useOperations() {
     }
   }
 
-  return { tasks, approvals, projects, project, detail, report, selectedId, chooseTask, chooseProject, createProject, createTask, validateWorkspace, createAgentTask, executeAgentTask, refreshTask, archiveProject, act, refresh, live, providerStatus, testingProvider, testProviderConnection, actionError, agentPlanning, agentError }
+  return { tasks, approvals, projects, project, detail, report, selectedId, chooseTask, chooseProject, createProject, createTask, validateWorkspace, createAgentTask, approveAndExecuteAgentTask, executeAgentTask, refreshTask, archiveProject, act, refresh, live, providerStatus, testingProvider, testProviderConnection, actionError, agentPlanning, agentError }
 }
