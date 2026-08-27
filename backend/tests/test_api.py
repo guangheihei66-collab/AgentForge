@@ -163,6 +163,7 @@ def test_operations_read_endpoints_expose_console_data(api_project_path):
     assert any(item["id"] == task_id for item in tasks.json())
     assert pending.json()[0]["task_id"] == task_id
     assert detail.json()["task"]["id"] == task_id
+    assert detail.json()["approvals"][0]["plan_version"] == plan["version"]
     assert report.json()["readiness"] == "PENDING"
 
 
