@@ -8,7 +8,7 @@ import pytest
 
 from app.main import app
 from app.storage.database import SessionLocal
-from app.storage.orm import AuditEventRecord, ToolExecutionRecord
+from app.storage.orm import ApprovalRecord, AuditEventRecord, TaskRecord, ToolExecutionRecord
 
 
 @pytest.fixture()
@@ -242,3 +242,140 @@ def test_execute_endpoint_runs_only_an_approved_plan(api_project_path):
     assert body["decision"] == "COMPLETE"
     assert body["state"] == "COMPLETED"
     assert body["completed_steps"] == len(plan["plan_json"]["steps"])
+
+
+def create_pending_agent_command_case(client: TestClient, root: Path):
+    project_id = create_api_project(client, root)
+    task = client.post(
+        "/tasks",
+        json={
+            "title": "Composite Agent command task",
+            "goal": "Exercise server-owned approval continuation",
+            "project_id": project_id,
+        },
+    ).json()
+    plan = client.post(f"/tasks/{task['id']}/plan", json={}).json()
+    approval = client.post(
+        f"/tasks/{task['id']}/approval",
+        json={
+            "plan_id": plan["id"],
+            "plan_version": plan["version"],
+            "requested_by": "operator",
+        },
+    ).json()
+    return task, plan, approval
+
+
+def test_agent_approve_and_execute_endpoint_runs_governed_runtime(api_project_path):
+    with TestClient(app) as client:
+        task, plan, approval = create_pending_agent_command_case(client, api_project_path)
+        response = client.post(
+            f"/tasks/{task['id']}/approve-and-execute",
+            json={
+                "approval_id": approval["id"],
+                "plan_id": plan["id"],
+                "plan_version": plan["version"],
+                "actor": "operator",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["task_id"] == task["id"]
+    assert body["plan_id"] == plan["id"]
+    assert body["plan_version"] == plan["version"]
+    assert body["decision"] == "COMPLETE"
+    with SessionLocal() as session:
+        assert session.get(ApprovalRecord, approval["id"]).decision == "APPROVED"
+        assert session.get(TaskRecord, task["id"]).status == "SUCCESS"
+        assert session.query(ToolExecutionRecord).filter_by(task_id=task["id"]).count() >= 1
+        audit = session.query(AuditEventRecord).filter_by(task_id=task["id"]).all()
+        assert any(event.event_type == "RUNTIME_OBSERVATION" for event in audit)
+        assert any(event.event_type == "EXECUTION_SNAPSHOT_APPROVED" for event in audit)
+
+
+def test_agent_approve_and_execute_rejects_stale_plan_version(api_project_path):
+    with TestClient(app) as client:
+        task, plan, approval = create_pending_agent_command_case(client, api_project_path)
+        response = client.post(
+            f"/tasks/{task['id']}/approve-and-execute",
+            json={
+                "approval_id": approval["id"],
+                "plan_id": plan["id"],
+                "plan_version": plan["version"] + 1,
+                "actor": "operator",
+            },
+        )
+
+    assert response.status_code == 400
+    with SessionLocal() as session:
+        assert session.get(ApprovalRecord, approval["id"]).decision == "PENDING"
+        assert session.query(ToolExecutionRecord).filter_by(task_id=task["id"]).count() == 0
+
+
+def test_agent_approve_and_execute_duplicate_does_not_run_twice(api_project_path):
+    with TestClient(app) as client:
+        task, plan, approval = create_pending_agent_command_case(client, api_project_path)
+        payload = {
+            "approval_id": approval["id"],
+            "plan_id": plan["id"],
+            "plan_version": plan["version"],
+            "actor": "operator",
+        }
+        first = client.post(f"/tasks/{task['id']}/approve-and-execute", json=payload)
+        with SessionLocal() as session:
+            first_count = session.query(ToolExecutionRecord).filter_by(task_id=task["id"]).count()
+        second = client.post(f"/tasks/{task['id']}/approve-and-execute", json=payload)
+        with SessionLocal() as session:
+            second_count = session.query(ToolExecutionRecord).filter_by(task_id=task["id"]).count()
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 400
+    assert first_count >= 1
+    assert second_count == first_count
+
+
+def test_agent_approve_and_execute_initiation_failure_is_explicit(api_project_path, monkeypatch):
+    from app.api.routes import execution
+
+    def fail_runtime(_db, _task_id):
+        raise RuntimeError("internal provider detail must not leak")
+
+    monkeypatch.setattr(execution, "_build_runtime", fail_runtime, raising=False)
+    with TestClient(app) as client:
+        task, plan, approval = create_pending_agent_command_case(client, api_project_path)
+        response = client.post(
+            f"/tasks/{task['id']}/approve-and-execute",
+            json={
+                "approval_id": approval["id"],
+                "plan_id": plan["id"],
+                "plan_version": plan["version"],
+                "actor": "operator",
+            },
+        )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Execution initiation failed"}
+    assert "internal provider detail" not in response.text
+    with SessionLocal() as session:
+        assert session.get(TaskRecord, task["id"]).status == "FAILED"
+        assert session.query(ToolExecutionRecord).filter_by(task_id=task["id"]).count() == 0
+        assert any(
+            event.event_type == "EXECUTION_INITIATION_FAILED"
+            for event in session.query(AuditEventRecord).filter_by(task_id=task["id"]).all()
+        )
+
+
+def test_global_approval_endpoint_remains_approval_only(api_project_path):
+    with TestClient(app) as client:
+        task, _, approval = create_pending_agent_command_case(client, api_project_path)
+        response = client.post(
+            f"/approvals/{approval['id']}/approve",
+            json={"actor": "operator"},
+        )
+
+    assert response.status_code == 200
+    with SessionLocal() as session:
+        assert session.get(ApprovalRecord, approval["id"]).decision == "APPROVED"
+        assert session.get(TaskRecord, task["id"]).status == "RUNNING"
+        assert session.query(ToolExecutionRecord).filter_by(task_id=task["id"]).count() == 0

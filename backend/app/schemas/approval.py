@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ApprovalCreate(BaseModel):
@@ -15,6 +15,15 @@ class ApprovalCreate(BaseModel):
 class ApprovalDecision(BaseModel):
     actor: str = Field(min_length=1, max_length=200)
     reason: str = Field(default="", max_length=2_000)
+
+
+class ApproveAndExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approval_id: str = Field(min_length=36, max_length=36)
+    plan_id: str = Field(min_length=36, max_length=36)
+    plan_version: int = Field(ge=1)
+    actor: str = Field(min_length=1, max_length=200)
 
 
 class ApprovalRead(BaseModel):
