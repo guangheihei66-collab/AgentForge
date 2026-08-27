@@ -46,6 +46,8 @@
 **Interfaces:** Export `AgentApprovalExecutionService` with:
 
 ```python
+class AgentExecutionInitiationError(RuntimeError): ...
+
 class AgentApprovalExecutionService:
     def __init__(self, session: Session, runtime_factory: Callable[[str], AgentRuntime]): ...
 

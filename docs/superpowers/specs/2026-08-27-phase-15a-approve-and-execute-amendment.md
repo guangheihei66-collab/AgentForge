@@ -59,7 +59,10 @@ is returned.
 
 ## Server-owned sequence
 
-`AgentApprovalExecutionService.approve_and_execute()` must:
+`AgentApprovalExecutionService.approve_and_execute()` must perform the sequence
+below. Runtime initiation failure is surfaced as a bounded
+`AgentExecutionInitiationError` after the Task has been made terminal and
+audited:
 
 1. Load the Task and highest current Plan.
 2. Require supplied `plan_id` and `plan_version` to match that current valid Plan.
