@@ -23,8 +23,6 @@ Approval Gateway
   ↓
 Tool Gateway
   ↓
-Evidence + Audit
-  ↓
 Execution
   ↓
 Evidence + Audit
@@ -43,6 +41,8 @@ Planner 只负责生成结构化计划；Plan Validator 负责校验；Approval 
 - 工具执行结果写入 ToolExecution、Evidence 和 AuditEvent。
 - 前端展示“Agent 准备执行什么”，而不是模拟聊天。
 - demo 数据是本地合成数据，不包含真实公司、密钥或个人隐私。
+- 控制台原生支持 `en-US` 和 `zh-CN`，语言选择会保存在浏览器存储中；路径、能力 ID、工具 ID、审计值和证据引用等技术值保持原样。
+- Agent 管理的审批只能从 Agent 工作区通过组合审批命令完成；全局审批入口不会提供通用批准并执行按钮。
 
 ## 面试讲解路线
 
@@ -55,4 +55,4 @@ Planner 只负责生成结构化计划；Plan Validator 负责校验；Approval 
 
 完整面试回答见 `docs/interview/technical_questions.md`，简历素材见 `docs/interview/resume_material.md`。
 
-Windows 下双击 `start\start_agentforge.bat` 启动演示，双击 `start\stop_agentforge.bat` 停止 AgentForge 进程。
+Windows 下双击根目录 `Start-AgentForge.bat` 启动演示，双击 `Stop-AgentForge.bat` 停止 AgentForge 进程。运行日志和 PID 文件保存在 `D:\AgentProjectData\AgentForge\runtime`，不会写入源码目录。

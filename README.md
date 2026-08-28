@@ -124,9 +124,11 @@ Double-click [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop AgentForge pro
 
 These root-level files are wrappers around the existing `launcher/` scripts. Runtime logs and PID files remain under `D:\AgentProjectData\AgentForge\runtime`.
 
-On Windows, double-click [`start/start_agentforge.bat`](start/start_agentforge.bat). It initializes idempotent synthetic demo data under `D:\AgentProjectData\AgentForge\`, starts the backend and frontend, and opens the dashboard.
+The launcher initializes idempotent synthetic demo data under `D:\AgentProjectData\AgentForge\`, starts the backend and frontend, and opens the dashboard. It does not create a Task or execute a tool as part of startup.
 
-Stop with [`start/stop_agentforge.bat`](start/stop_agentforge.bat) or [`stop_agentforge.bat`](stop_agentforge.bat). Runtime logs and PID files remain outside the source tree.
+Use [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop only the AgentForge process tree. Runtime logs and PID files remain outside the source tree.
+
+Use the language selector in the top bar to switch between `en-US` and `zh-CN`. The selected locale is persisted in browser storage; technical identifiers, paths, capability IDs, tool IDs, audit values, evidence references, and provider/model values remain unchanged.
 
 Manual checks:
 
@@ -144,6 +146,8 @@ npm run build
 Phase 13 controlled re-planning is implemented behind the existing governed planning boundary. It allows at most two replans and twelve total steps across versions, with an 8 KiB context cap and 12 KiB complete-prompt cap. Every successor version, including safe-read-only plans, requires fresh approval of exact resolved snapshots. Plan v1 remains immutable and cannot authorize v2. Audit records contain bounded summaries and references, not Chain of Thought, raw model/tool output, or provider credentials. Mock remains deterministic and offline; a real-provider failure never silently falls back to Mock. Phase 13 requires no database migration or frontend setup. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 Phase 14 local Projects are implemented in the backend and React console. New API Tasks require `project_id`; clients cannot inject workspace or Tool authority. Legacy null-Project history remains readable but non-executable. The schema migration is idempotent and tested only against isolated SQLite files. The live runtime database has not been migrated by this implementation task; that operation requires a separate approved backup and migration.
+
+The current release candidate integrates the native frontend localization surface into the latest Agent Workspace UI. The console keeps the approval-routing safety rule: Agent-managed approvals must be completed from Agent Workspace through the composite approval command, while generic approval remains approval-only. The release candidate also keeps the bounded terminal recovery CTA and hides it after durable execution initiation or terminal completion.
 
 Runtime data belongs under `D:\AgentProjectData\AgentForge\`, never in this source tree.
 

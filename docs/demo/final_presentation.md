@@ -20,7 +20,7 @@ The Planner proposes a structured plan. The Validator checks schema, tools, acti
 
 ## 2:00–4:00 — Live demo
 
-1. Start AgentForge with `start_agentforge.bat` and open the Dashboard.
+1. Start AgentForge with `Start-AgentForge.bat` and open the Dashboard.
 2. Select the seeded `Release v2.0 Verification` task and open Approval Center.
 3. Show `git_read`, `file_read`, and predefined `test_run`, including risk and permission labels.
 4. Approve the plan and point out that the decision is recorded.

@@ -1,7 +1,7 @@
-# AgentForge startup
+# Legacy AgentForge startup wrappers
 
-Double-click `start_agentforge.bat` to initialize synthetic demo data, start the FastAPI backend and Vite frontend, and open the dashboard.
+The canonical Windows entry points are the root-level [`Start-AgentForge.bat`](../Start-AgentForge.bat) and [`Stop-AgentForge.bat`](../Stop-AgentForge.bat). They delegate to the maintained `launcher/` implementation.
 
-Double-click `stop_agentforge.bat` to stop only the processes recorded by AgentForge under `D:\AgentProjectData\AgentForge\runtime\`.
+The files in this directory are retained as legacy compatibility wrappers only. They are not the documented release-candidate entry point.
 
-Runtime logs and PID files stay outside the source repository.
+Runtime logs and PID files stay under `D:\AgentProjectData\AgentForge\runtime\`, outside the source repository.

@@ -12,9 +12,9 @@ Requirements:
 - At least the approved project-drive storage headroom from Phase 0
 
 1. Copy `.env.example` to `.env` only if custom paths are needed. Keep real credentials outside the repository.
-2. Double-click `start/start_agentforge.bat`.
+2. Double-click `Start-AgentForge.bat`.
 3. Open `http://localhost:5173` and follow `docs/demo/DEMO_RUNBOOK.md`.
-4. Stop only the recorded AgentForge process trees with `start/stop_agentforge.bat`.
+4. Stop only the recorded AgentForge process trees with `Stop-AgentForge.bat`.
 
 The launcher initializes the database, seeds idempotent synthetic demo records, starts the backend on `127.0.0.1:8000`, starts Vite on `127.0.0.1:5173`, and opens the browser. It does not pull images, download models, or install dependencies.
 

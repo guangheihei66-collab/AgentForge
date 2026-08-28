@@ -13,9 +13,9 @@ The repository root is the release package. Its public-facing structure is:
 AgentForge/
 ├── README.md
 ├── README_CN.md
-├── start_agentforge.bat
-├── stop_agentforge.bat
-├── start/
+├── Start-AgentForge.bat
+├── Stop-AgentForge.bat
+├── launcher/
 ├── backend/
 ├── frontend/
 ├── docs/
@@ -44,7 +44,7 @@ AgentForge/
 
 ## Known demo boundary
 
-This is a private stable release. Distribution is source plus the Windows launcher scripts; no installer or automatic updater is provided, and the release pipeline remains manual.
+This is a private release candidate. Distribution is source plus the Windows launcher scripts; no installer or automatic updater is provided, and the release pipeline remains manual.
 
 This is a portfolio MVP, not a production deployment. The UI intentionally demonstrates the governed approval and reporting surfaces with idempotent synthetic fixtures. Task creation and planning are backend API operations; execution remains behind the Tool Gateway and is not exposed as an unrestricted UI action. This preserves the security boundary and avoids adding an ungoverned shortcut solely for the demo.
 
