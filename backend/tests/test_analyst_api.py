@@ -98,6 +98,25 @@ def test_report_api_returns_validated_analyst_report_additively(api_project_path
     assert "reasoning" not in response.text.lower()
 
 
+def test_diagnostics_exposes_analyst_lifecycle_and_report_identity(api_project_path, db_session):
+    with TestClient(app) as client:
+        task_id, plan_id = create_terminal_task(client, api_project_path)
+        response = client.get("/diagnostics")
+
+    assert response.status_code == 200
+    analyst = response.json()["analyst"]
+    assert analyst["status"] == "SUCCEEDED"
+    assert analyst["task_id"] == task_id
+    assert analyst["plan_id"] == plan_id
+    assert analyst["plan_version"] == 1
+    assert analyst["provider"] == "mock"
+    assert analyst["model"] == "deterministic-mock"
+    assert analyst["artifact_path"]
+    assert len(analyst["content_hash"]) == 64
+    assert "prompt" not in response.text.lower()
+    assert "reasoning" not in response.text.lower()
+
+
 def test_legacy_task_report_is_readable_without_pretending_analysis(api_project_path, db_session):
     with TestClient(app) as client:
         project_id = create_project(client, api_project_path)

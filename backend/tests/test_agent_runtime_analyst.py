@@ -1,7 +1,11 @@
 import pytest
+from pathlib import Path
 
+from app.agents.providers.mock import MockLLMProvider
 from app.agent_runtime.executor import RuntimeExecutor
 from app.agent_runtime.runtime import AgentRuntime
+from app.analyst.models import AnalystSynthesisStatus
+from app.analyst.service import AnalystService
 from app.agent_runtime.state import RuntimeDecision, RuntimeState
 from app.approvals.service import ApprovalError
 from app.permissions.levels import PermissionLevel
@@ -15,6 +19,7 @@ from tests.test_agent_runtime import (
     project_workspace,
     runtime_steps,
 )
+from tests.project_test_support import artifact_root
 
 
 class RecordingAnalyst:
@@ -46,6 +51,33 @@ def test_runtime_invokes_analyst_after_terminal_success(db_session):
     assert analyst.calls == [
         {"task_id": task.id, "plan_id": plan.id, "plan_version": 1}
     ]
+
+
+def test_runtime_persists_real_analyst_report_after_governed_execution(db_session):
+    task = make_task(db_session)
+    plan = make_plan(db_session, task, runtime_steps("git_read"))
+    analyst = AnalystService(
+        db_session,
+        MockLLMProvider(),
+        data_root=Path(artifact_root(db_session)),
+    )
+    runtime = AgentRuntime(
+        db_session,
+        RuntimeExecutor(make_gateway(db_session)),
+        analyst_service=analyst,
+    )
+
+    result = runtime.run(task_id=task.id, plan_id=plan.id, plan_version=1)
+    read_model = analyst.get_read_model(task.id)
+
+    assert result.state is RuntimeState.COMPLETED
+    assert read_model.status is AnalystSynthesisStatus.SUCCEEDED
+    assert read_model.report is not None
+    assert read_model.report.task_id == task.id
+    assert read_model.report.plan_id == plan.id
+    assert read_model.report.plan_version == 1
+    assert read_model.artifact_path is not None
+    assert Path(read_model.artifact_path).is_file()
 
 
 def test_runtime_analyst_failure_does_not_change_terminal_execution(db_session):

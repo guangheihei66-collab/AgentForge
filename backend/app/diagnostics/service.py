@@ -1,11 +1,15 @@
 import json
+import os
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..analyst.read_model import AnalystReadModel, read_analyst_report
+from ..analyst.storage import AnalystArtifactStore
 from ..agents.providers.config import load_provider_config
 from ..identity import get_runtime_identity
-from ..schemas.diagnostics import CommandProvenanceRead, DiagnosticsRead, ExecutionCountsRead, HealthRead, RecentTaskRead, RuntimeIdentityRead
+from ..schemas.diagnostics import AnalystDiagnosticsRead, CommandProvenanceRead, DiagnosticsRead, ExecutionCountsRead, HealthRead, RecentTaskRead, RuntimeIdentityRead
 from ..storage.orm import ApprovalRecord, AuditEventRecord, EvidenceRecord, PlanRecord, TaskRecord, ToolExecutionRecord
 from .health import classify_overall
 
@@ -116,6 +120,29 @@ def _command_provenance(
     )
 
 
+def _analyst_snapshot(session: Session, task_id: str) -> AnalystDiagnosticsRead:
+    data_root = Path(
+        os.getenv("AGENTFORGE_DATA_ROOT", r"D:\AgentProjectData\AgentForge")
+    )
+    read_model: AnalystReadModel = read_analyst_report(
+        session,
+        task_id=task_id,
+        artifact_store=AnalystArtifactStore(data_root),
+    )
+    return AnalystDiagnosticsRead(
+        status=read_model.status.value,
+        task_id=task_id,
+        plan_id=read_model.plan_id,
+        plan_version=read_model.plan_version,
+        provider=read_model.provider,
+        model=read_model.model,
+        artifact_path=read_model.artifact_path,
+        content_hash=read_model.content_hash,
+        generated_at=read_model.generated_at,
+        failure_category=read_model.failure_category,
+    )
+
+
 def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
     identity = get_runtime_identity()
     provider, provider_state = _provider()
@@ -127,6 +154,7 @@ def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
     backend_state = "HEALTHY"
     recent = session.scalars(select(TaskRecord).order_by(TaskRecord.updated_at.desc()).limit(1)).first()
     recent_task = None
+    analyst = AnalystDiagnosticsRead(status="NOT_REQUESTED")
     command_provenance = None
     if recent:
         plan = session.scalars(select(PlanRecord).where(PlanRecord.task_id == recent.id).order_by(PlanRecord.version.desc()).limit(1)).first()
@@ -136,5 +164,6 @@ def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
         failed = execution_counts.get("FAILED", 0)
         rejected = execution_counts.get("REJECTED", 0)
         recent_task = RecentTaskRead(id=recent.id, state=recent.status, plan_version=plan.version if plan else None, approval=approval.decision if approval else None, executions=ExecutionCountsRead(total=sum(execution_counts.values()), success=success, failed=failed, rejected=rejected), evidence_count=session.scalar(select(func.count()).select_from(EvidenceRecord).where(EvidenceRecord.task_id == recent.id)) or 0, observation_count=session.scalar(select(func.count()).select_from(AuditEventRecord).where(AuditEventRecord.task_id == recent.id, AuditEventRecord.event_type.ilike("%observation%"))) or 0, replan_count=session.scalar(select(func.count()).select_from(AuditEventRecord).where(AuditEventRecord.task_id == recent.id, AuditEventRecord.event_type.ilike("%replan%"))) or 0)
+        analyst = _analyst_snapshot(session, recent.id)
         command_provenance = _command_provenance(session, recent)
-    return DiagnosticsRead(identity=RuntimeIdentityRead(**identity.__dict__) if hasattr(identity, "__dict__") else RuntimeIdentityRead(product=identity.product, version=identity.version, revision=identity.revision, environment=identity.environment), health=HealthRead(overall=classify_overall(backend=backend_state, database=database_state, provider=provider_state), backend=backend_state, database=database_state, provider=provider_state), provider=provider, recent_task=recent_task, command_provenance=command_provenance, recent_errors=[])
+    return DiagnosticsRead(identity=RuntimeIdentityRead(**identity.__dict__) if hasattr(identity, "__dict__") else RuntimeIdentityRead(product=identity.product, version=identity.version, revision=identity.revision, environment=identity.environment), health=HealthRead(overall=classify_overall(backend=backend_state, database=database_state, provider=provider_state), backend=backend_state, database=database_state, provider=provider_state), provider=provider, recent_task=recent_task, analyst=analyst, command_provenance=command_provenance, recent_errors=[])
