@@ -13,7 +13,17 @@ const authority: ProjectAuthority = {
 const snapshot: ApprovalSnapshot = {
   schema_version: 2,
   project_authority: authority,
-  steps: [],
+  steps: [{
+    task_id: 'task-1',
+    plan_id: 'plan-1',
+    plan_version: 1,
+    step_id: 'step-1',
+    capability_id: 'repository_state',
+    resolved_tool_id: 'git_read',
+    resolved_action: 'status',
+    normalized_parameters: {},
+    registry_fingerprint: 'fingerprint',
+  }],
 }
 
 const approval: ApprovalQueueItem = {
@@ -29,10 +39,16 @@ const approval: ApprovalQueueItem = {
   plan_json: {
     schema_version: 2,
     steps: [],
-    resolved_steps: [],
+    resolved_steps: snapshot.steps,
     project_authority: authority,
   },
   resolved_snapshot: snapshot,
+}
+
+const nonAgentApproval: ApprovalQueueItem = {
+  ...approval,
+  task_title: 'Repository Analyst Agent',
+  resolved_snapshot: null,
 }
 
 const renderApprovals = (overrides: Partial<React.ComponentProps<typeof Approvals>> = {}) => render(
@@ -49,17 +65,28 @@ const renderApprovals = (overrides: Partial<React.ComponentProps<typeof Approval
 describe('Global Approval safety actions', () => {
   afterEach(() => cleanup())
 
-  it('labels the generic approval action as approval-only and explains the execution boundary', () => {
+  it('routes an Agent-managed approval to Agent Workspace without a generic approve action', () => {
     const onApprove = vi.fn()
     renderApprovals({ onApprove })
 
+    expect(screen.queryByRole('button', { name: 'Approve only' })).not.toBeInTheDocument()
+    expect(screen.getByText(/must be completed in Agent Workspace so governed execution can start/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open in Agent Workspace' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument()
+    expect(onApprove).not.toHaveBeenCalled()
+  })
+
+  it('keeps generic approval for records without the Agent execution authority', () => {
+    const onApprove = vi.fn()
+    renderApprovals({ approvals: [nonAgentApproval], onApprove })
+
     expect(screen.getByRole('button', { name: 'Approve only' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^Approve$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open in Agent Workspace' })).not.toBeInTheDocument()
     expect(screen.getByText(/Approving here records the approval only\. It does not start Agent execution\./i)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Approve only' }))
 
-    expect(onApprove).toHaveBeenCalledWith(approval.id)
+    expect(onApprove).toHaveBeenCalledWith(nonAgentApproval.id)
   })
 
   it('offers a task-scoped Agent Workspace navigation action without approving or executing', () => {

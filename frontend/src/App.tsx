@@ -20,7 +20,7 @@ export function App() {
     {page === 'dashboard' && <Dashboard tasks={ops.tasks} approvals={ops.approvals} providerStatus={ops.providerStatus} testingProvider={ops.testingProvider} onTestProvider={() => void ops.testProviderConnection()} onTask={(id) => { void ops.chooseTask(id); setPage('detail') }} onApprovals={() => setPage('approvals')} />}
     {page === 'projects' && <Projects projects={ops.projects} onOpen={(id) => { void ops.chooseProject(id); setPage('project-detail') }} onCreate={ops.createProject} onValidate={ops.validateWorkspace} />}
     {page === 'project-detail' && <ProjectDetail project={ops.project} onBack={() => setPage('projects')} onCreateTask={ops.createTask} onArchive={ops.archiveProject} />}
-    {page === 'approvals' && <Approvals approvals={ops.approvals} actionError={ops.actionError} onApprove={(id) => void ops.act('approve', id)} onReject={(id) => void ops.act('reject', id)} onCancel={() => void ops.act('cancel')} onOpenInAgentWorkspace={(taskId) => { void ops.chooseTask(taskId); setPage('agent') }} />}
+    {page === 'approvals' && <Approvals approvals={ops.approvals} actionError={ops.actionError} onApprove={(id) => void ops.act('approve', id)} onReject={(id) => void ops.act('reject', id)} onCancel={() => void ops.act('cancel')} onOpenInAgentWorkspace={async (taskId) => { await ops.chooseTask(taskId); setPage('agent') }} />}
     {page === 'detail' && <TaskDetail detail={ops.detail} onBack={() => setPage('dashboard')} onReport={() => setPage('report')} />}
     {page === 'report' && <Report report={ops.report} onBack={() => setPage('detail')} />}
     {page === 'diagnostics' && <Diagnostics />}

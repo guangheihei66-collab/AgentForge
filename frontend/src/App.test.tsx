@@ -4,7 +4,7 @@ import { App } from './App'
 import { api } from './api/client'
 
 describe('AgentForge operations console', () => {
-  afterEach(() => cleanup())
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('backend unavailable')))
@@ -26,13 +26,21 @@ describe('AgentForge operations console', () => {
     expect(screen.getByText(/Resolved tool: test_run/i)).toBeInTheDocument()
     expect(screen.getByText(/profile: smoke/i)).toBeInTheDocument()
     expect(screen.getAllByText(/Registry fingerprint:/i).length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open in Agent Workspace' })).toBeInTheDocument()
   })
 
   it('shows the approval error when the decision request is rejected', async () => {
+    const task = { id: 'task-generic', project_id: 'project-generic', title: 'Generic Approval', goal: 'Review a generic approval', workspace: 'D:/AgentProjects/AgentForge', status: 'WAITING_APPROVAL' as const, created_at: '', updated_at: '' }
+    const approval = { id: 'approval-generic', approval_id: 'approval-generic', task_id: task.id, task_title: task.title, plan_id: 'plan-generic', plan_version: 1, decision: 'PENDING', requested_by: 'operator', created_at: '', plan_json: { schema_version: 2 as const, steps: [], resolved_steps: [], project_authority: { project_id: 'project-generic', config_version: 1, authority_fingerprint: 'fingerprint', canonical_workspace_root: 'D:/AgentProjects/AgentForge' } }, resolved_snapshot: null }
+    vi.spyOn(api, 'listTasks').mockResolvedValue([task])
+    vi.spyOn(api, 'getPendingApprovals').mockResolvedValue([approval])
+    vi.spyOn(api, 'listProjects').mockResolvedValue([])
+    vi.spyOn(api, 'getProviderStatus').mockResolvedValue({ provider: 'mock', model: 'deterministic-mock', configured: true, credential_configured: false, connection_status: 'not tested' })
+    vi.spyOn(api, 'approve').mockRejectedValue(new Error('backend unavailable'))
+
     render(<App />)
     fireEvent.click((await screen.findAllByRole('button', { name: /Review approvals/i }))[0])
-    fireEvent.click(await screen.findByRole('button', { name: /Approve/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve only' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('backend unavailable')
   })
@@ -211,7 +219,7 @@ function jsonResponse(value: unknown) {
 function approvalFlowFetch() {
   const task = { id: 'task-live', project_id: 'project-live', title: 'Release v2.0 Verification', goal: 'Verify release', workspace: 'D:/AgentProjects/AgentForge', status: 'WAITING_APPROVAL', created_at: '2026-08-21T14:18:07Z', updated_at: '2026-08-21T14:32:01Z' }
   const plan = { id: 'plan-live', version: 1, validation_status: 'VALID', created_at: task.created_at, plan_json: { schema_version: 2, steps: [], resolved_steps: [], project_authority: {} } }
-  const pending = { id: task.id, approval_id: null, task_id: task.id, task_title: task.title, plan_id: plan.id, plan_version: 1, decision: 'PENDING', requested_by: 'planner-agent', created_at: task.updated_at, plan_json: plan.plan_json, resolved_snapshot: { schema_version: 2, project_authority: {}, steps: [] } }
+  const pending = { id: task.id, approval_id: null, task_id: task.id, task_title: task.title, plan_id: plan.id, plan_version: 1, decision: 'PENDING', requested_by: 'planner-agent', created_at: task.updated_at, plan_json: plan.plan_json, resolved_snapshot: null }
   let approved = false
   return vi.fn(async (input: string | URL | Request, request?: RequestInit) => {
     const url = String(input)

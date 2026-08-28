@@ -5,11 +5,13 @@ import { api } from './api/client'
 import type { ApprovalSnapshot, ProjectAuthority, TaskDetail } from './types'
 
 const task = { id: 'task-current', project_id: 'project-1', title: 'Repository Analyst Agent', goal: 'RAW GOAL', workspace: 'D:/AgentForge', status: 'WAITING_APPROVAL' as const, created_at: '', updated_at: '' }
+const staleTask = { id: 'task-stale', project_id: 'project-1', title: 'Stale historical task', goal: 'OLD GOAL', workspace: 'D:/AgentForge', status: 'RUNNING' as const, created_at: '', updated_at: '' }
 const project = { id: 'project-1', name: 'AgentForge', description: null, workspace_root: 'D:/AgentForge', environment: 'development', status: 'ACTIVE' as const, allowed_capability_ids: ['repository_state'], config_version: 1, recent_task_count: 0, created_at: '', updated_at: '' }
 const authority: ProjectAuthority = { project_id: project.id, config_version: 1, authority_fingerprint: 'fingerprint', canonical_workspace_root: project.workspace_root }
 const snapshot: ApprovalSnapshot = { schema_version: 2, project_authority: authority, steps: [] }
 const plan = { id: 'plan-1', version: 1, validation_status: 'VALID' as const, created_at: '', plan_json: { schema_version: 2 as const, steps: [], resolved_steps: [], project_authority: authority } }
 const pending = { id: 'approval-1', approval_id: 'approval-1', task_id: task.id, task_title: task.title, plan_id: plan.id, plan_version: 1, decision: 'PENDING' as const, requested_by: 'operator', created_at: '', plan_json: plan.plan_json, resolved_snapshot: snapshot }
+const nonAgentPending = { ...pending, task_title: 'Repository Analyst Agent', resolved_snapshot: null }
 
 describe('Agent approval-to-execution wiring', () => {
   beforeEach(() => {
@@ -81,7 +83,8 @@ describe('Agent approval-to-execution wiring', () => {
     })
   })
 
-  it('keeps Global Approval approval-only and never starts Agent execution', async () => {
+  it('keeps Global Approval approval-only for a non-Agent approval', async () => {
+    vi.mocked(api.getPendingApprovals).mockResolvedValue([nonAgentPending])
     render(<App />)
     fireEvent.click(screen.getAllByRole('button', { name: /Approvals/i })[0])
 
@@ -97,6 +100,7 @@ describe('Agent approval-to-execution wiring', () => {
     render(<App />)
     fireEvent.click(screen.getAllByRole('button', { name: /Approvals/i })[0])
 
+    expect(screen.queryByRole('button', { name: 'Approve only' })).not.toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'Open in Agent Workspace' }))
 
     expect(await screen.findByRole('heading', { name: 'Agent workspace' })).toBeInTheDocument()
@@ -104,5 +108,29 @@ describe('Agent approval-to-execution wiring', () => {
     expect(api.approve).not.toHaveBeenCalled()
     expect(api.approveAndExecuteTask).not.toHaveBeenCalled()
     expect(api.executeTask).not.toHaveBeenCalled()
+  })
+
+  it('switches from a restored historical task to the approval task before rendering Agent controls', async () => {
+    const storage = { getItem: () => staleTask.id, setItem: vi.fn(), removeItem: vi.fn() }
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage })
+    Object.defineProperty(window, 'localStorage', { configurable: true, value: storage })
+    vi.mocked(api.listTasks).mockResolvedValue([staleTask, task])
+    vi.mocked(api.getTaskDetail).mockImplementation(async (id): Promise<TaskDetail> => ({
+      task: id === task.id ? task : staleTask,
+      plans: [plan],
+      approvals: id === task.id ? [{ ...pending, approver: 'operator', decision: 'PENDING' }] : [],
+      executions: [],
+      evidence: [],
+      audit: [],
+    }))
+    vi.mocked(api.getReport).mockImplementation(async (id) => ({ task: id === task.id ? task : staleTask, readiness: 'PENDING', summary: 'Awaiting approval', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 0, execution_count: 0 }))
+
+    render(<App />)
+    await waitFor(() => expect(api.getTaskDetail).toHaveBeenCalledWith(staleTask.id))
+    fireEvent.click(screen.getAllByRole('button', { name: /Approvals/i })[0])
+    fireEvent.click(await screen.findByRole('button', { name: 'Open in Agent Workspace' }))
+
+    expect(await screen.findByText(task.id)).toBeInTheDocument()
+    expect(screen.queryByText(staleTask.id)).not.toBeInTheDocument()
   })
 })
