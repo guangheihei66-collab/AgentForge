@@ -11,7 +11,12 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from ..agents.providers.base import LLMProvider, LLMRequest, ProviderError
+from ..agents.providers.base import (
+    LLMProvider,
+    LLMRequest,
+    ProviderError,
+    ProviderErrorCategory,
+)
 from ..storage.orm import AuditEventRecord, TaskRecord
 from .models import AnalystDraft, AnalystReport, AnalystSynthesisStatus
 from .package import EvidencePackageError, build_evidence_package
@@ -104,7 +109,7 @@ class AnalystService:
             )
             if self.provider is None:
                 raise ProviderError(
-                    category="NOT_CONFIGURED"  # type: ignore[arg-type]
+                    category=ProviderErrorCategory.NOT_CONFIGURED
                 )
             generate = getattr(self.provider, "generate_analyst", None)
             if not callable(generate):

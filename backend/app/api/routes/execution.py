@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ...agent_runtime import AgentRuntime, RuntimeExecutor
+from ...analyst.service import AnalystService
 from ...agents.orchestration.service import (
     AgentApprovalExecutionService,
     AgentExecutionInitiationError,
@@ -57,6 +58,7 @@ def _build_runtime(db: Session, task_id: str) -> AgentRuntime:
         db,
         RuntimeExecutor(gateway),
         replanning_service=ReplanningService(db, provider),
+        analyst_service=AnalystService(db, provider, data_root=data_root),
     )
 
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..agents.replanning.models import ReplanOutcomeStatus, StepSummary
 from ..agents.replanning.service import ReplanningService
+from ..analyst.service import AnalystService
 from ..approvals.service import ApprovalService
 from ..capabilities.models import ResolvedExecutionSnapshot
 from ..capabilities.registry import build_default_capability_registry
@@ -46,6 +47,7 @@ class AgentRuntime:
         resolver: CapabilityResolver | None = None,
         observer: RuntimeObserver | None = None,
         replanning_service: ReplanningService | None = None,
+        analyst_service: AnalystService | None = None,
     ):
         self.session = session
         self.executor = executor
@@ -54,6 +56,7 @@ class AgentRuntime:
         )
         self.observer = observer or RuntimeObserver()
         self.replanning_service = replanning_service
+        self.analyst_service = analyst_service
 
     def run(self, *, task_id: str, plan_id: str, plan_version: int) -> RuntimeResult:
         task = self.session.get(TaskRecord, task_id)
@@ -227,6 +230,9 @@ class AgentRuntime:
                     self._transition(
                         runtime_snapshot, task_id, RuntimeState.FAILED, summary
                     )
+                    self._synthesize_after_terminal(
+                        task_id=task_id, plan_id=plan_id, plan_version=plan_version
+                    )
                     return RuntimeResult(
                         task_id,
                         plan_id,
@@ -287,6 +293,9 @@ class AgentRuntime:
                     RuntimeState.COMPLETED,
                     observation.decision_summary,
                 )
+                self._synthesize_after_terminal(
+                    task_id=task_id, plan_id=plan_id, plan_version=plan_version
+                )
                 return RuntimeResult(
                     task_id=task_id,
                     plan_id=plan_id,
@@ -309,6 +318,9 @@ class AgentRuntime:
                 RuntimeState.FAILED,
                 observation.decision_summary,
             )
+            self._synthesize_after_terminal(
+                task_id=task_id, plan_id=plan_id, plan_version=plan_version
+            )
             return RuntimeResult(
                 task_id=task_id,
                 plan_id=plan_id,
@@ -321,6 +333,32 @@ class AgentRuntime:
 
         # Plan validation requires at least one step, but keep the invariant explicit.
         raise ValueError("Runtime cannot complete an empty plan")
+
+    def _synthesize_after_terminal(
+        self, *, task_id: str, plan_id: str, plan_version: int
+    ) -> None:
+        """Best-effort downstream synthesis after terminal facts are committed."""
+
+        if self.analyst_service is None:
+            return
+        try:
+            self.analyst_service.synthesize(
+                task_id=task_id, plan_id=plan_id, plan_version=plan_version
+            )
+        except Exception:
+            # Analyst failure must never change a committed governed outcome.
+            try:
+                self._audit_event(
+                    task_id,
+                    "ANALYST_SYNTHESIS_FAILED",
+                    {
+                        "plan_id": plan_id,
+                        "plan_version": plan_version,
+                        "failure_category": "ANALYST_SERVICE_ERROR",
+                    },
+                )
+            except Exception:
+                self.session.rollback()
 
     @staticmethod
     def _step_summaries(
