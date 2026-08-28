@@ -17,8 +17,8 @@ TaskService / POST /tasks
   -> PlannerAgent / POST /tasks/{task_id}/plan
   -> PlanValidator + CapabilityResolver
   -> ApprovalService / POST /tasks/{task_id}/approval
-  -> POST /approvals/{approval_id}/approve|reject
-  -> POST /tasks/{task_id}/execute
+  -> POST /approvals/{approval_id}/approve|reject (Global Approvals; approval-only)
+  -> POST /tasks/{task_id}/approve-and-execute (Agent Workspace)
   -> AgentRuntime -> ToolGateway
   -> ToolExecution, RuntimeObservation, Evidence, Audit, Report
 ```
@@ -45,9 +45,11 @@ The frontend currently has a `useOperations` hook that composes these APIs and p
 
 ## 5. Architecture decision
 
-**Decision: A — zero new backend endpoints.**
+**Decision: A — one Agent-specific backend orchestration endpoint.**
 
-The existing contracts cleanly express the MVP lifecycle. The Agent Workspace can create a Task, call the existing planning endpoint, read the Task Detail and pending Approval data, call the existing Approval and execution endpoints, and refresh the same Task Detail/Report. A new aggregate endpoint would duplicate a read-only join that already exists in `/tasks/{task_id}/detail` plus `/tasks/{task_id}/report`; a task-creation facade would duplicate `POST /tasks`, which already requires the selected Project and raw Goal.
+The existing contracts express the individual lifecycle operations, but the real Agent Workspace acceptance runs proved that a browser-owned Approval -> refresh -> Execute continuation can strand an approved Task at `RUNNING` with no execution when the browser callback, refresh, or page lifecycle fails. Add one command endpoint only for the Agent Workspace approval action so the server owns the critical continuation. This is not a read aggregate or a task-creation facade: it composes the existing ApprovalService and AgentRuntime authority checks.
+
+Global Approvals remains approval-only through `POST /approvals/{approval_id}/approve`. The new Agent command is the only surface that combines a HUMAN Approval decision with the existing governed Runtime invocation.
 
 The frontend may add a small projection function that maps persisted detail/audit records to safe timeline items. This is presentation logic, not a new persistence model or runtime.
 
@@ -119,7 +121,9 @@ Canonical IDs remain unchanged in API payloads and persisted records. Approval f
 
 ## 10. Execution lifecycle
 
-After Approval, the Agent Workspace invokes only `POST /tasks/{task_id}/execute`. It must not call tools directly or select a tool from the plan. The backend revalidates Task, Plan version, Approval snapshot, Project authority, registry, workspace, and runtime limits before each governed step.
+The Agent Workspace Approve action invokes only `POST /tasks/{task_id}/approve-and-execute` with the exact Approval and current Plan binding. The server validates the Task, current Plan, Approval ownership/decision, and Plan version, persists the HUMAN decision through `ApprovalService`, and invokes the existing AgentRuntime. The frontend refreshes only to render the resulting persisted state; it does not decide whether execution should start. The Runtime still revalidates Task, Plan version, Approval snapshot, Project authority, registry, workspace, and runtime limits before each governed step.
+
+The command is not presented as a magical database-plus-external-execution transaction. If Approval has been persisted but Runtime initiation fails before any ToolExecution, the server records a bounded `EXECUTION_INITIATION_FAILED` audit event and transitions the Task from `RUNNING` to `FAILED`; it never silently leaves an unexplained `APPROVED` + `RUNNING` + zero-execution lifecycle. A consumed Approval cannot be retried to start a second Runtime execution.
 
 The UI refreshes Task Detail and Report after the execution response and during active execution. A successful HTTP response is not itself a success claim; the displayed result comes from the persisted Task state, ToolExecution statuses, observations, evidence, and Report.
 
@@ -145,7 +149,7 @@ No Evidence means the UI says that no Evidence was recorded; it does not manufac
 
 ## 13. Backend/API approach
 
-No backend endpoint or schema change is required for the MVP. The frontend composes:
+The Phase 15A amendment adds one Agent-specific command and no database schema:
 
 ```text
 POST /tasks
@@ -153,13 +157,14 @@ POST /tasks/{id}/plan
 GET /tasks/{id}/detail
 GET /approvals/pending
 POST /tasks/{id}/approval
-POST /approvals/{id}/approve|reject
-POST /tasks/{id}/execute
+POST /approvals/{id}/approve|reject (Global Approvals; approval-only)
+POST /tasks/{id}/approve-and-execute (Agent Workspace; Approval + governed Runtime)
+POST /tasks/{id}/execute (explicit already-approved retry path)
 GET /tasks/{id}/report
 GET /tasks/{id}/audit
 ```
 
-The existing API has one minor product-experience consideration for implementation: the current execution response is a bounded summary, while authoritative detail is persisted and available through the read endpoints. The Agent page should therefore refresh/read after each mutation rather than treat the response as the complete timeline.
+The command response reuses the existing bounded Runtime result shape. The current execution response remains a bounded summary; authoritative detail is persisted and available through the read endpoints. The Agent page refreshes/reads after the command to render the resulting timeline rather than treating the response as the complete lifecycle.
 
 ## 14. Persistence strategy
 
@@ -252,8 +257,8 @@ Backend regression coverage should remain unchanged unless repository evidence i
 4. Enter: `Check whether this project is ready to release.`
 5. Start Agent and observe Goal received, Planning, and Plan v1.
 6. Review requested read-only capabilities and workspace scope.
-7. HUMAN approves through the normal Approval flow.
-8. Observe governed ToolExecution, Observation, and Evidence updates.
+7. HUMAN approves in Agent Workspace; the single Agent command owns Approval plus governed execution.
+8. Observe governed ToolExecution, Observation, and Evidence updates. Global Approvals is separately verified to remain approval-only.
 9. If a real semantic failure causes Controlled Replan, verify Plan v2 stops at Waiting for Approval and ask the HUMAN to approve it; never auto-approve.
 10. Review the final Conclusion and trace each Evidence item to persisted execution/observation data.
 11. Reload during active work and confirm the timeline reconstructs without false success.
@@ -273,5 +278,40 @@ Phase 15A does not include multi-agent collaboration, swarms, marketplaces, long
 - Successor Plans always require fresh Approval.
 - Raw Goal and Evidence remain unchanged; no Chain-of-Thought is exposed.
 - Frontend deterministic lifecycle/polling tests and existing backend security/runtime suites pass.
-- No new capability, ToolGateway permission, persistence model, backend endpoint, localization dependency, or release behavior is introduced without a separately approved design change.
+- No new capability, ToolGateway permission, persistence model, localization dependency, or release behavior is introduced. The separately approved Agent-specific orchestration endpoint is the only backend endpoint added by this amendment.
 - HUMAN can complete the bounded dogfood scenario and inspect the final evidence-backed Report.
+
+## 22. Phase 15A architectural amendment: server-owned Agent approval continuation
+
+The original Phase 15A design made the browser responsible for the critical two-hop sequence `approve -> refresh authoritative TaskDetail -> execute`. Real acceptance evidence showed that Approval could persist while the second browser request never happened, leaving `Task = RUNNING`, no ToolExecution, no Observation, no Evidence, and a pending Report. This is a lifecycle-reliability weakness: React state, refresh races, stale bundles, page teardown, and browser failures can interrupt a security-critical continuation after the HUMAN decision has already been committed.
+
+The amendment introduces the exact command contract:
+
+```text
+POST /tasks/{task_id}/approve-and-execute
+Content-Type: application/json
+
+{
+  "approval_id": "<HUMAN Approval ID>",
+  "plan_id": "<current Plan ID>",
+  "plan_version": 1,
+  "actor": "operator"
+}
+```
+
+The endpoint returns the existing bounded Runtime result fields: `task_id`, `plan_id`, `plan_version`, `state`, `decision`, `completed_steps`, `observations`, `successor_plan_id`, `successor_plan_version`, and `approval_id`. It does not return prompts, hidden reasoning, credentials, raw provider output, or raw tool output.
+
+The server-side `AgentApprovalExecutionService` performs this sequence:
+
+1. Load the Task and the highest current Plan.
+2. Require the supplied Plan ID/version to equal that current valid Plan.
+3. Load the supplied Approval and require it to belong to the Task and current Plan and still be `PENDING`.
+4. Call the existing `ApprovalService.approve()` path, preserving Project authority validation, the HUMAN actor, approval audit, and the existing state transition.
+5. Re-read the authoritative approved binding and invoke the existing `AgentRuntime` through its existing RuntimeExecutor and ToolGateway composition.
+6. Preserve Runtime, CapabilityResolver, ToolGateway, Observation, Evidence, Report, and Controlled Replan semantics unchanged.
+
+The command is approval-consumptive. A duplicate or retry for the same Approval is rejected before Runtime invocation; it cannot produce a second Runtime execution. If the approved command cannot initiate Runtime before a ToolExecution exists, the service records a factual bounded failure audit and moves the already-approved Task to `FAILED`. This is explicit failure handling, not rollback or fabricated atomicity.
+
+Agent Workspace uses this command once for Approve and then reads authoritative state for rendering. It no longer calls `api.approve()` followed by `refreshTask()` followed by `api.executeTask()` as its primary approval path. Global Approvals continues to call `POST /approvals/{approval_id}/approve` and never starts Runtime automatically. A Controlled Replan still creates a new immutable Plan and fresh Approval; v1 Approval cannot authorize v2.
+
+This amendment adds no capability, permission, workspace authority, Runtime, Replan policy, persistence table, or database migration. It supersedes the original zero-endpoint and browser-owned approval-continuation statements in Sections 3, 5, 10, 13, 19, 20, and the Exit criteria above.

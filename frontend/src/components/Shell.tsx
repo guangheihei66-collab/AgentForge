@@ -1,10 +1,11 @@
-import { Activity, BadgeCheck, BookOpen, ClipboardList, FileSearch, FolderKanban, Gauge, HeartPulse, LayoutDashboard, ShieldCheck } from 'lucide-react'
+import { Activity, BadgeCheck, BookOpen, Bot, ClipboardList, FileSearch, FolderKanban, Gauge, HeartPulse, LayoutDashboard, ShieldCheck } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-export type Page = 'dashboard' | 'projects' | 'project-detail' | 'approvals' | 'detail' | 'report' | 'diagnostics'
+export type Page = 'dashboard' | 'agent' | 'projects' | 'project-detail' | 'approvals' | 'detail' | 'report' | 'diagnostics'
 export function Shell({ page, setPage, pending, children }: { page: Page; setPage: (page: Page) => void; pending: number; children: ReactNode }) {
   const nav: { label: string; icon: typeof Gauge; page: Page }[] = [
     { label: 'Dashboard', icon: LayoutDashboard, page: 'dashboard' },
+    { label: 'Agent', icon: Bot, page: 'agent' },
     { label: 'Projects', icon: FolderKanban, page: 'projects' },
     { label: 'Tasks', icon: ClipboardList, page: 'detail' },
     { label: 'Approvals', icon: BadgeCheck, page: 'approvals' },

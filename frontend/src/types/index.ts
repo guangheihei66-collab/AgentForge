@@ -70,11 +70,28 @@ export type ProviderStatus = {
   failure_category?: string | null
 }
 export type HealthState = 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'UNKNOWN'
+export type ExecutionInitiationState = 'NOT_REQUESTED' | 'REQUESTED' | 'STARTED' | 'FAILED'
+export type CommandProvenance = {
+  command_kind: string
+  task_id: string
+  task_state: string
+  plan_id: string | null
+  plan_version: number | null
+  approval_id: string | null
+  approval_state: string | null
+  authority_validation: string | null
+  approval_persistence: string | null
+  execution_initiation: ExecutionInitiationState
+  last_checkpoint: string
+  correlation_id: string
+  failure_category: string | null
+}
 export type Diagnostics = {
   identity: { product: string; version: string; revision: string | null; environment: string }
   health: { overall: HealthState; backend: HealthState; database: HealthState; provider: HealthState }
   provider: { provider: string; model: string; structured_output_mode: string; credential_configured: boolean; connection: string }
   recent_task: { id: string; state: string; plan_version: number | null; approval: string | null; executions: { total: number; success: number; failed: number; rejected: number }; evidence_count: number; observation_count: number; replan_count: number } | null
+  command_provenance: CommandProvenance | null
   recent_errors: string[]
 }
 
@@ -85,10 +102,12 @@ export type ApprovalSnapshot = {
 }
 
 export type Plan = { id: string; version: number; plan_json: PlanDocument; validation_status: string; created_at: string }
-export type Approval = { id: string; plan_id: string; decision: string; approver: string; reason?: string; resolved_snapshot?: ApprovalSnapshot; created_at: string }
+export type Approval = { id: string; plan_id: string; plan_version?: number; decision: string; approver: string; reason?: string; resolved_snapshot?: ApprovalSnapshot; created_at: string }
 export type Execution = { id: string; tool_name: string; action: string; status: string; result_summary?: string; artifact_path?: string; content_hash?: string; started_at: string; finished_at?: string }
 export type Evidence = { id: string; summary: string; artifact_path?: string; content_hash?: string; created_at: string }
 export type AuditEvent = { id: string; event_type: string; actor: string; payload_summary: string; correlation_id: string; created_at: string }
 export type TaskDetail = { task: TaskSummary; plans: Plan[]; approvals: Approval[]; executions: Execution[]; evidence: Evidence[]; audit: AuditEvent[] }
-export type ApprovalQueueItem = { id: string; approval_id?: string | null; task_id: string; task_title: string; plan_id: string; plan_version: number; decision: string; requested_by: string; created_at: string; plan_json: PlanDocument; resolved_snapshot: ApprovalSnapshot }
-export type Report = { task: TaskSummary; readiness: 'PASS' | 'FAIL' | 'PENDING'; summary: string; completed_steps: number; failed_steps: number; evidence: Evidence[]; audit_count: number; execution_count: number }
+export type ApprovalQueueItem = { id: string; approval_id?: string | null; task_id: string; task_title: string; plan_id: string; plan_version: number; decision: string; requested_by: string; created_at: string; plan_json: PlanDocument; resolved_snapshot: ApprovalSnapshot | null }
+export type AgentApprovalCommand = { approval_id: string; plan_id: string; plan_version: number; actor: string }
+export type RuntimeResult = { task_id: string; plan_id: string; plan_version: number; state: string; decision: string; completed_steps: number; observations: unknown[]; successor_plan_id?: string | null; successor_plan_version?: number | null; approval_id?: string | null }
+export type Report = { task: TaskSummary; readiness: 'PASS' | 'FAIL' | 'PENDING'; summary: string; completed_steps: number; failed_steps: number; rejected_steps: number; evidence: Evidence[]; audit_count: number; execution_count: number }
