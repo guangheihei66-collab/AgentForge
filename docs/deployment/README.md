@@ -16,7 +16,7 @@ Requirements:
 3. Open `http://localhost:5173` and follow `docs/demo/DEMO_RUNBOOK.md`.
 4. Stop only the recorded AgentForge process trees with `Stop-AgentForge.bat`.
 
-The launcher initializes the database, seeds idempotent synthetic demo records, starts the backend on `127.0.0.1:8000`, starts Vite on `127.0.0.1:5173`, and opens the browser. It does not pull images, download models, or install dependencies.
+The launcher starts the backend on `127.0.0.1:8000`, starts Vite on `127.0.0.1:5173`, waits for health/readiness, and opens the browser. Normal startup is infrastructure-only: it does not seed Projects, Tasks, Approvals, ToolExecutions, Evidence, or other business records. It does not pull images, download models, or install dependencies.
 
 ## Internal server deployment
 

@@ -5,7 +5,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $defaultLocalConfigPath = Join-Path $PSScriptRoot ".env.local"
 $effectiveLocalConfigPath = if ([string]::IsNullOrWhiteSpace($LocalConfigPath)) {
@@ -40,95 +39,8 @@ function Import-LocalDeveloperConfig([string]$path) {
 }
 
 Import-LocalDeveloperConfig $effectiveLocalConfigPath
-$dataRoot = if ($env:AGENTFORGE_DATA_ROOT) { $env:AGENTFORGE_DATA_ROOT } else { "D:\AgentProjectData\AgentForge" }
-$runtime = Join-Path $dataRoot "runtime"
-$logs = Join-Path $runtime "logs"
-$backendLog = Join-Path $logs "backend.log"
-$backendErrorLog = Join-Path $logs "backend-error.log"
-$bootstrapLog = Join-Path $logs "launcher-bootstrap.log"
-$frontendLog = Join-Path $logs "frontend.log"
-$frontendErrorLog = Join-Path $logs "frontend-error.log"
-$backendPidFile = Join-Path $runtime "launcher-backend.pid"
-$frontendPidFile = Join-Path $runtime "launcher-frontend.pid"
-
-New-Item -ItemType Directory -Force -Path $runtime, $logs | Out-Null
-
-function Write-LauncherLog([string]$message) {
-  $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $message
-  Add-Content -LiteralPath (Join-Path $logs "launcher.log") -Value $line
-  Write-Host $line
-}
-
-function Fail([string]$message) {
-  Write-LauncherLog "ERROR: $message"
-  throw $message
-}
-
-function Get-ProcessCommandLine([int]$processId) {
-  $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
-  if ($process) { return [string]$process.CommandLine }
-  return ""
-}
-
-function Test-DescendantCommand([int]$processId, [string]$needle) {
-  $children = Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $processId }
-  foreach ($child in $children) {
-    $childCommand = ([string]$child.CommandLine).ToLowerInvariant()
-    if ($childCommand.Contains($needle.ToLowerInvariant())) { return $true }
-    if (Test-DescendantCommand ([int]$child.ProcessId) $needle) { return $true }
-  }
-  return $false
-}
-
-function Test-ExpectedProcess([int]$processId, [string]$kind) {
-  $commandLine = Get-ProcessCommandLine $processId
-  if (-not $commandLine) { return $false }
-  $normalized = $commandLine.ToLowerInvariant()
-  $rootMatch = $root.ToLowerInvariant()
-  if ($kind -eq "backend") {
-    return $normalized.Contains("uvicorn app.main:app") -and ($normalized.Contains($rootMatch) -or $normalized.Contains("agentforge"))
-  }
-  return $normalized.Contains("run dev") -and ($normalized.Contains((Join-Path $root "frontend").ToLowerInvariant()) -or (Test-DescendantCommand $processId (Join-Path $root "frontend")))
-}
-
-function Test-HttpHealth {
-  try {
-    return (Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8000/health" -TimeoutSec 2).StatusCode -eq 200
-  } catch { return $false }
-}
-
-function Get-Diagnostics {
-  try {
-    return Invoke-RestMethod "http://127.0.0.1:8000/diagnostics" -TimeoutSec 3
-  } catch { return $null }
-}
-
-function Test-ProviderConnection {
-  try {
-    return Invoke-RestMethod "http://127.0.0.1:8000/llm/provider/test" -Method Post -TimeoutSec 5
-  } catch { return $null }
-}
-
-function Test-Port([int]$port) {
-  try {
-    $connection = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $port -State Listen -ErrorAction Stop
-    return $null -ne $connection
-  } catch { return $false }
-}
-
-function Wait-Until([scriptblock]$condition, [int]$timeoutSeconds, [string]$description) {
-  $deadline = (Get-Date).AddSeconds($timeoutSeconds)
-  while ((Get-Date) -lt $deadline) {
-    if (& $condition) { Write-LauncherLog (("{0}: ready" -f $description)); return }
-    Start-Sleep -Milliseconds 500
-  }
-  Fail "$description did not become ready within $timeoutSeconds seconds. See $logs."
-}
-
-$pythonOverride = $env:AGENTFORGE_PYTHON
-$hasPythonOverride = -not [string]::IsNullOrWhiteSpace($pythonOverride)
-$python = if ($hasPythonOverride) {
-  $pythonOverride
+$python = if ($env:AGENTFORGE_PYTHON) {
+  $env:AGENTFORGE_PYTHON
 } else {
   Join-Path $root "backend\.venv\Scripts\python.exe"
 }
@@ -145,94 +57,19 @@ if ($ResolveConfigOnly) {
 }
 
 if ($ResolvePythonOnly) {
-  if ($hasPythonOverride -and -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+  if ($env:AGENTFORGE_PYTHON -and -not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "Configured AGENTFORGE_PYTHON does not exist: $python"
   }
   Write-Output $python
   exit 0
 }
 
-# The native Controller owns the service session and its Windows Job Object.
-# Keep the existing config and interpreter resolution above, then delegate the
-# normal launch path to the controller instead of managing child trees here.
-$env:PYTHONPATH = Join-Path $root "backend"
-Push-Location $root
-try {
-  & $python -m launcher.controller --root $root
-  exit $LASTEXITCODE
-} finally {
-  Pop-Location
-}
-
-try {
-  Write-LauncherLog "Starting AgentForge from $root"
-  if ($hasPythonOverride) {
-    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { Fail "Configured AGENTFORGE_PYTHON does not exist: $python" }
-  } elseif (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-    Fail "Backend virtual environment not found: $python"
-  }
-  $node = Get-Command node.exe -ErrorAction SilentlyContinue
-  $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-  if (-not $node) { Fail "Node.js was not found on PATH." }
-  if (-not $npm) { Fail "npm.cmd was not found on PATH." }
-  Write-LauncherLog "Python environment: $(& $python --version 2>&1)"
-  Write-LauncherLog "Node environment: $(& $node.Source --version 2>&1); npm $(& $npm.Source --version 2>&1)"
-
-  $env:PYTHONPATH = Join-Path $root "backend"
-  & $python -c "from app.storage.database import init_db; init_db()" *>> $bootstrapLog
-  if ($LASTEXITCODE -ne 0) { Fail "Database initialization failed." }
-  & $python (Join-Path $root "scripts\seed_demo.py") *>> $bootstrapLog
-  if ($LASTEXITCODE -ne 0) { Fail "Demo data initialization failed." }
-
-  if (Test-Path -LiteralPath $backendPidFile) {
-    $existingBackendPid = [int](Get-Content -LiteralPath $backendPidFile -Raw).Trim()
-    if (-not (Get-Process -Id $existingBackendPid -ErrorAction SilentlyContinue) -or -not (Test-ExpectedProcess $existingBackendPid "backend")) {
-      Remove-Item -LiteralPath $backendPidFile -Force -ErrorAction SilentlyContinue
-    }
-  }
-
-  if (-not (Test-HttpHealth)) {
-    if (Test-Port 8000) { Fail "Port 8000 is occupied, but the service is not a healthy AgentForge backend." }
-    $backend = Start-Process -FilePath $python -ArgumentList "-m uvicorn app.main:app --host 127.0.0.1 --port 8000" -WorkingDirectory (Join-Path $root "backend") -RedirectStandardOutput $backendLog -RedirectStandardError $backendErrorLog -WindowStyle Hidden -PassThru
-    Set-Content -LiteralPath $backendPidFile -Value $backend.Id
-    Write-LauncherLog "Started backend process $($backend.Id)"
-  } else {
-    Write-LauncherLog "Healthy backend already running; no duplicate process started."
-  }
-  Wait-Until { Test-HttpHealth } 30 "Backend health check"
-
-  if (Test-Path -LiteralPath $frontendPidFile) {
-    $existingFrontendPid = [int](Get-Content -LiteralPath $frontendPidFile -Raw).Trim()
-    if (-not (Get-Process -Id $existingFrontendPid -ErrorAction SilentlyContinue) -or -not (Test-ExpectedProcess $existingFrontendPid "frontend")) {
-      Remove-Item -LiteralPath $frontendPidFile -Force -ErrorAction SilentlyContinue
-    }
-  }
-
-  if (-not (Test-Port 5173)) {
-    $frontend = Start-Process -FilePath $npm.Source -ArgumentList "run dev -- --host 127.0.0.1" -WorkingDirectory (Join-Path $root "frontend") -RedirectStandardOutput $frontendLog -RedirectStandardError $frontendErrorLog -WindowStyle Hidden -PassThru
-    Set-Content -LiteralPath $frontendPidFile -Value $frontend.Id
-    Write-LauncherLog "Started frontend process $($frontend.Id)"
-  } else {
-    Write-LauncherLog "Port 5173 is already available; no duplicate frontend process started."
-  }
-  Wait-Until { Test-Port 5173 } 30 "Frontend port check"
-
-  $providerResult = Test-ProviderConnection
-  if (-not $providerResult) { Write-LauncherLog "Provider: FAILED (connection probe unavailable)" }
-  $diagnostics = Get-Diagnostics
-  if ($diagnostics) {
-    Write-LauncherLog "Backend: $($diagnostics.health.backend); Database: $($diagnostics.health.database); Provider: $($diagnostics.health.provider)"
-    Write-LauncherLog "AgentForge version: $($diagnostics.identity.version); revision: $(if ($diagnostics.identity.revision) { $diagnostics.identity.revision } else { 'UNKNOWN' })"
-    if ($diagnostics.health.overall -eq "UNHEALTHY") { Fail "Diagnostics reported unhealthy runtime state." }
-    if ($diagnostics.health.overall -eq "DEGRADED") { Write-LauncherLog "AgentForge is ready with degraded dependencies." }
-  } else {
-    Fail "Diagnostics endpoint did not become available."
-  }
-
-  Start-Process "http://localhost:5173"
-  Write-LauncherLog "AgentForge is ready: http://localhost:5173"
-} catch {
-  Write-Host "AgentForge startup failed: $($_.Exception.Message)" -ForegroundColor Red
-  Write-Host "Runtime logs: $logs" -ForegroundColor Yellow
-  exit 1
-}
+# Normal user-facing startup is delegated to Windows Script Host. The VBS
+# entry resolves pythonw.exe and the Python controller owns the service Job
+# Object, single-instance boundary, tray, health checks, and external logs.
+$entry = Join-Path $PSScriptRoot "launch_agentforge.vbs"
+$wscript = Join-Path $env:WINDIR "System32\wscript.exe"
+if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) { throw "Launcher entry point not found: $entry" }
+if (-not (Test-Path -LiteralPath $wscript -PathType Leaf)) { throw "Windows Script Host not found: $wscript" }
+Start-Process -FilePath $wscript -ArgumentList ('//nologo "' + $entry + '"') -WindowStyle Hidden
+exit 0

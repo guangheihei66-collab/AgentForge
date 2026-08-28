@@ -119,15 +119,30 @@ The MVP uses a custom state machine and three allowlisted tools: Git read, File 
 
 ## Quick Start
 
-Windows:
+Windows (recommended):
 
-Double-click [`Start-AgentForge.bat`](Start-AgentForge.bat) to start AgentForge.
+Run the shortcut installer once:
+
+```powershell
+.\Create-AgentForge-Desktop-Shortcut.ps1
+```
+
+Then double-click the desktop shortcut **AgentForge 一键启动**.
+
+For this feature worktree, use `-FeatureWorktree`; it creates the clearly
+labelled **AgentForge 一键启动 (RC)** test shortcut without overwriting a main
+installation shortcut.
+
+The root-level batch entry remains available as a compatibility wrapper:
+
+Double-click [`Start-AgentForge.bat`](Start-AgentForge.bat) to dispatch the
+same windowless launcher.
 
 Double-click [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop AgentForge processes.
 
 These root-level files are wrappers around the existing `launcher/` scripts. Runtime logs and PID files remain under `D:\AgentProjectData\AgentForge\runtime`.
 
-The launcher initializes idempotent synthetic demo data under `D:\AgentProjectData\AgentForge\`, starts the backend and frontend, and opens the dashboard. It does not create a Task or execute a tool as part of startup.
+The launcher starts the backend and frontend, waits for health/readiness, and opens the dashboard. Normal startup is infrastructure-only and does not create Projects, Tasks, Approvals, ToolExecutions, Evidence, or execute tools.
 
 Use [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop only the AgentForge process tree. Runtime logs and PID files remain outside the source tree.
 

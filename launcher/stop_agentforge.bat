@@ -1,5 +1,5 @@
 @echo off
 setlocal
-PowerShell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop_agentforge.ps1"
-if errorlevel 1 pause
-endlocal
+wscript.exe //nologo "%~dp0control_agentforge.vbs" exit
+set "EXIT_CODE=%ERRORLEVEL%"
+endlocal & exit /b %EXIT_CODE%
