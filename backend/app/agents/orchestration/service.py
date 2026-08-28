@@ -1,18 +1,26 @@
 """Compose HUMAN approval and governed Agent Runtime execution."""
 
 from collections.abc import Callable
-from datetime import datetime, timezone
-import json
-from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
 from ...agent_runtime import AgentRuntime, RuntimeResult
 from ...approvals.service import ApprovalError, ApprovalService
+from ...audit.provenance import (
+    AGENT_APPROVE_AND_EXECUTE_COMMAND_RECEIVED,
+    APPROVAL_COMMAND_FAILED,
+    APPROVAL_COMMAND_SUCCEEDED,
+    EXECUTION_INITIATION_FAILED,
+    EXECUTION_INITIATION_REQUESTED,
+    EXECUTION_INITIATION_STARTED,
+    command_correlation_id,
+    persist_provenance_event,
+    safe_error_category,
+)
 from ...domain.states.task_state import TaskStatus
 from ...services.plan_repository import PlanRepository
 from ...services.task_service import TaskService
-from ...storage.orm import ApprovalRecord, AuditEventRecord, TaskRecord, ToolExecutionRecord
+from ...storage.orm import ApprovalRecord, TaskRecord, ToolExecutionRecord
 
 
 class AgentExecutionInitiationError(RuntimeError):
@@ -38,15 +46,74 @@ class AgentApprovalExecutionService:
         plan_id: str,
         plan_version: int,
         actor: str,
+        correlation_id: str | None = None,
     ) -> RuntimeResult:
-        task, plan, approval = self._validate_command(
-            task_id=task_id,
-            approval_id=approval_id,
-            plan_id=plan_id,
-            plan_version=plan_version,
-        )
+        correlation_id = command_correlation_id(correlation_id)
+        command_task = self.session.get(TaskRecord, task_id)
+        if command_task is not None:
+            persist_provenance_event(
+                self.session,
+                task_id=task_id,
+                event_type=AGENT_APPROVE_AND_EXECUTE_COMMAND_RECEIVED,
+                actor=actor,
+                correlation_id=correlation_id,
+                fields={
+                    "approval_id": approval_id,
+                    "command_kind": "AGENT_APPROVE_AND_EXECUTE",
+                    "outcome": "RECEIVED",
+                    "plan_id": plan_id,
+                    "plan_version": plan_version,
+                    "task_state": command_task.status,
+                },
+            )
+        try:
+            task, plan, approval = self._validate_command(
+                task_id=task_id,
+                approval_id=approval_id,
+                plan_id=plan_id,
+                plan_version=plan_version,
+            )
+        except Exception as exc:
+            self._record_command_failure(
+                task=command_task,
+                approval_id=approval_id,
+                plan_id=plan_id,
+                plan_version=plan_version,
+                actor=actor,
+                correlation_id=correlation_id,
+                error=exc,
+            )
+            raise
 
-        ApprovalService(self.session).approve(approval.id, actor=actor)
+        try:
+            ApprovalService(self.session).approve(approval.id, actor=actor)
+        except Exception as exc:
+            self._record_command_failure(
+                task=command_task,
+                approval_id=approval_id,
+                plan_id=plan_id,
+                plan_version=plan_version,
+                actor=actor,
+                correlation_id=correlation_id,
+                error=exc,
+            )
+            raise
+
+        self._record_command_succeeded(
+            task=task,
+            approval=approval,
+            plan_id=plan.id,
+            plan_version=plan.version,
+            actor=actor,
+            correlation_id=correlation_id,
+        )
+        self._record_initiation_requested(
+            task=task,
+            approval_id=approval.id,
+            plan_id=plan.id,
+            plan_version=plan.version,
+            correlation_id=correlation_id,
+        )
         execution_count_before = (
             self.session.query(ToolExecutionRecord)
             .filter_by(task_id=task.id)
@@ -54,6 +121,13 @@ class AgentApprovalExecutionService:
         )
         try:
             runtime = self.runtime_factory(task.id)
+            self._record_initiation_started(
+                task=task,
+                approval_id=approval.id,
+                plan_id=plan.id,
+                plan_version=plan.version,
+                correlation_id=correlation_id,
+            )
             return runtime.run(
                 task_id=task.id,
                 plan_id=plan.id,
@@ -71,6 +145,8 @@ class AgentApprovalExecutionService:
                 plan_version=plan.version,
                 execution_count_before=execution_count_before,
                 execution_count_after=execution_count_after,
+                approval_id=approval.id,
+                correlation_id=correlation_id,
                 error=exc,
             )
             raise AgentExecutionInitiationError(
@@ -112,6 +188,8 @@ class AgentApprovalExecutionService:
         plan_version: int,
         execution_count_before: int,
         execution_count_after: int,
+        approval_id: str,
+        correlation_id: str,
         error: Exception,
     ) -> None:
         if (
@@ -125,22 +203,139 @@ class AgentApprovalExecutionService:
                 reason="Execution initiation failed",
             )
         payload = {
-            "task_id": task.id,
-            "plan_id": plan_id,
-            "plan_version": plan_version,
-            "error_category": type(error).__name__[:100],
+            "approval_id": approval_id,
+            "command_kind": "AGENT_APPROVE_AND_EXECUTE",
+            "error_category": safe_error_category(error, initiation=True),
             "execution_count_before": execution_count_before,
             "execution_count_after": execution_count_after,
+            "execution_initiation": "FAILED",
+            "outcome": "FAILED",
+            "plan_id": plan_id,
+            "plan_version": plan_version,
             "summary": "Execution initiation failed",
+            "task_id": task.id,
+            "task_state": self.session.get(TaskRecord, task.id).status,
         }
-        self.session.add(
-            AuditEventRecord(
-                task_id=task.id,
-                event_type="EXECUTION_INITIATION_FAILED",
-                actor="agent_orchestration",
-                payload_summary=json.dumps(payload, ensure_ascii=False),
-                correlation_id=str(uuid4()),
-                created_at=datetime.now(timezone.utc),
-            )
+        persist_provenance_event(
+            self.session,
+            task_id=task.id,
+            event_type=EXECUTION_INITIATION_FAILED,
+            actor="agent_orchestration",
+            correlation_id=correlation_id,
+            fields=payload,
         )
-        self.session.commit()
+
+    def _record_command_failure(
+        self,
+        *,
+        task: TaskRecord | None,
+        approval_id: str,
+        plan_id: str,
+        plan_version: int,
+        actor: str,
+        correlation_id: str,
+        error: Exception,
+    ) -> None:
+        if task is None:
+            return
+        self.session.rollback()
+        current = self.session.get(TaskRecord, task.id)
+        persist_provenance_event(
+            self.session,
+            task_id=task.id,
+            event_type=APPROVAL_COMMAND_FAILED,
+            actor=actor,
+            correlation_id=correlation_id,
+            fields={
+                "approval_id": approval_id,
+                "authority_validation": "FAILED",
+                "command_kind": "AGENT_APPROVE_AND_EXECUTE",
+                "error_category": safe_error_category(error),
+                "execution_initiation": "NOT_REQUESTED",
+                "outcome": "REJECTED",
+                "plan_id": plan_id,
+                "plan_version": plan_version,
+                "task_state": current.status if current is not None else task.status,
+            },
+        )
+
+    def _record_command_succeeded(
+        self,
+        *,
+        task: TaskRecord,
+        approval: ApprovalRecord,
+        plan_id: str,
+        plan_version: int,
+        actor: str,
+        correlation_id: str,
+    ) -> None:
+        persist_provenance_event(
+            self.session,
+            task_id=task.id,
+            event_type=APPROVAL_COMMAND_SUCCEEDED,
+            actor=actor,
+            correlation_id=correlation_id,
+            fields={
+                "approval_id": approval.id,
+                "approval_persistence": "APPROVED",
+                "approval_state": approval.decision,
+                "authority_validation": "PASSED",
+                "command_kind": "AGENT_APPROVE_AND_EXECUTE",
+                "outcome": "APPROVAL_PERSISTED",
+                "plan_id": plan_id,
+                "plan_version": plan_version,
+                "task_state": task.status,
+            },
+        )
+
+    def _record_initiation_started(
+        self,
+        *,
+        task: TaskRecord,
+        approval_id: str,
+        plan_id: str,
+        plan_version: int,
+        correlation_id: str,
+    ) -> None:
+        persist_provenance_event(
+            self.session,
+            task_id=task.id,
+            event_type=EXECUTION_INITIATION_STARTED,
+            actor="agent_orchestration",
+            correlation_id=correlation_id,
+            fields={
+                "approval_id": approval_id,
+                "command_kind": "AGENT_APPROVE_AND_EXECUTE",
+                "execution_initiation": "STARTED",
+                "outcome": "STARTED",
+                "plan_id": plan_id,
+                "plan_version": plan_version,
+                "task_state": task.status,
+            },
+        )
+
+    def _record_initiation_requested(
+        self,
+        *,
+        task: TaskRecord,
+        approval_id: str,
+        plan_id: str,
+        plan_version: int,
+        correlation_id: str,
+    ) -> None:
+        persist_provenance_event(
+            self.session,
+            task_id=task.id,
+            event_type=EXECUTION_INITIATION_REQUESTED,
+            actor="agent_orchestration",
+            correlation_id=correlation_id,
+            fields={
+                "approval_id": approval_id,
+                "command_kind": "AGENT_APPROVE_AND_EXECUTE",
+                "execution_initiation": "REQUESTED",
+                "outcome": "REQUESTED",
+                "plan_id": plan_id,
+                "plan_version": plan_version,
+                "task_state": task.status,
+            },
+        )

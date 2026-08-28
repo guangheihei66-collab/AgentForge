@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 from pathlib import Path
 import shutil
@@ -292,6 +294,25 @@ def test_agent_approve_and_execute_endpoint_runs_governed_runtime(api_project_pa
         audit = session.query(AuditEventRecord).filter_by(task_id=task["id"]).all()
         assert any(event.event_type == "RUNTIME_OBSERVATION" for event in audit)
         assert any(event.event_type == "EXECUTION_SNAPSHOT_APPROVED" for event in audit)
+        provenance = {
+            event.event_type: (event.correlation_id, json.loads(event.payload_summary))
+            for event in audit
+            if event.event_type in {
+                "AGENT_APPROVE_AND_EXECUTE_COMMAND_RECEIVED",
+                "APPROVAL_COMMAND_SUCCEEDED",
+                "EXECUTION_INITIATION_REQUESTED",
+                "EXECUTION_INITIATION_STARTED",
+            }
+        }
+        assert set(provenance) == {
+            "AGENT_APPROVE_AND_EXECUTE_COMMAND_RECEIVED",
+            "APPROVAL_COMMAND_SUCCEEDED",
+            "EXECUTION_INITIATION_REQUESTED",
+            "EXECUTION_INITIATION_STARTED",
+        }
+        assert len({value[0] for value in provenance.values()}) == 1
+        assert provenance["APPROVAL_COMMAND_SUCCEEDED"][1]["authority_validation"] == "PASSED"
+        assert provenance["APPROVAL_COMMAND_SUCCEEDED"][1]["approval_persistence"] == "APPROVED"
 
 
 def test_agent_approve_and_execute_rejects_stale_plan_version(api_project_path):
@@ -364,6 +385,12 @@ def test_agent_approve_and_execute_initiation_failure_is_explicit(api_project_pa
             event.event_type == "EXECUTION_INITIATION_FAILED"
             for event in session.query(AuditEventRecord).filter_by(task_id=task["id"]).all()
         )
+        events = session.query(AuditEventRecord).filter_by(task_id=task["id"]).all()
+        initiation_failure = next(event for event in events if event.event_type == "EXECUTION_INITIATION_FAILED")
+        failure_payload = json.loads(initiation_failure.payload_summary)
+        assert failure_payload["execution_initiation"] == "FAILED"
+        assert failure_payload["error_category"] == "RUNTIME_START_FAILED"
+        assert "internal provider detail" not in initiation_failure.payload_summary
 
 
 def test_global_approval_endpoint_remains_approval_only(api_project_path):
@@ -379,3 +406,50 @@ def test_global_approval_endpoint_remains_approval_only(api_project_path):
         assert session.get(ApprovalRecord, approval["id"]).decision == "APPROVED"
         assert session.get(TaskRecord, task["id"]).status == "RUNNING"
         assert session.query(ToolExecutionRecord).filter_by(task_id=task["id"]).count() == 0
+        audit = session.query(AuditEventRecord).filter_by(task_id=task["id"]).all()
+        command_events = [event for event in audit if event.event_type in {
+            "GLOBAL_APPROVAL_COMMAND_RECEIVED",
+            "APPROVAL_COMMAND_SUCCEEDED",
+            "EXECUTION_INITIATION_REQUESTED",
+            "EXECUTION_INITIATION_STARTED",
+            "EXECUTION_INITIATION_FAILED",
+        }]
+        assert [event.event_type for event in command_events] == [
+            "GLOBAL_APPROVAL_COMMAND_RECEIVED",
+            "APPROVAL_COMMAND_SUCCEEDED",
+        ]
+        received = json.loads(command_events[0].payload_summary)
+        succeeded = json.loads(command_events[1].payload_summary)
+        assert received["command_kind"] == "GLOBAL_APPROVAL"
+        assert received["approval_id"] == approval["id"]
+        assert succeeded["approval_persistence"] == "APPROVED"
+
+
+def test_diagnostics_projects_latest_command_provenance(api_project_path):
+    with TestClient(app) as client:
+        task, plan, approval = create_pending_agent_command_case(client, api_project_path)
+        response = client.post(
+            f"/approvals/{approval['id']}/approve",
+            json={"actor": "operator"},
+            headers={"X-Request-ID": "7d2f8a18-32d8-4d85-8f8a-7e9f0e10f4e1"},
+        )
+        diagnostics = client.get("/diagnostics")
+
+    assert response.status_code == 200
+    assert diagnostics.status_code == 200
+    provenance = diagnostics.json()["command_provenance"]
+    assert provenance == {
+        "command_kind": "GLOBAL_APPROVAL",
+        "task_id": task["id"],
+        "task_state": "RUNNING",
+        "plan_id": plan["id"],
+        "plan_version": plan["version"],
+        "approval_id": approval["id"],
+        "approval_state": "APPROVED",
+        "authority_validation": "PASSED",
+        "approval_persistence": "APPROVED",
+        "execution_initiation": "NOT_REQUESTED",
+        "last_checkpoint": "APPROVAL_COMMAND_SUCCEEDED",
+        "correlation_id": "7d2f8a18-32d8-4d85-8f8a-7e9f0e10f4e1",
+        "failure_category": None,
+    }

@@ -1,9 +1,17 @@
 """Approval and audit endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ...approvals.service import ApprovalError, ApprovalService
+from ...audit.provenance import (
+    APPROVAL_COMMAND_FAILED,
+    APPROVAL_COMMAND_SUCCEEDED,
+    GLOBAL_APPROVAL_COMMAND_RECEIVED,
+    command_correlation_id,
+    persist_provenance_event,
+    safe_error_category,
+)
 from ...schemas.approval import (
     ApprovalCreate,
     ApprovalDecision,
@@ -13,14 +21,12 @@ from ...schemas.approval import (
 from ...schemas.audit import AuditEventRead
 from ...schemas.task import TaskRead
 from ...storage.database import get_db
-from ...storage.orm import AuditEventRecord
+from ...storage.orm import ApprovalRecord, AuditEventRecord, PlanRecord, TaskRecord
 
 router = APIRouter(tags=["approvals"])
 
 
 def _approval_read(approval, db: Session) -> ApprovalRead:
-    from ...storage.orm import PlanRecord
-
     plan = db.get(PlanRecord, approval.plan_id)
     return ApprovalRead(
         id=approval.id,
@@ -55,17 +61,122 @@ def create_approval(
 def approve(
     approval_id: str,
     payload: ApprovalDecision,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> ApprovalRead:
+    correlation_id = command_correlation_id(request.headers.get("X-Request-ID"))
+    context = _approval_context(approval_id, db)
+    if context is not None:
+        approval_record, task, plan = context
+        persist_provenance_event(
+            db,
+            task_id=task.id,
+            event_type=GLOBAL_APPROVAL_COMMAND_RECEIVED,
+            actor=payload.actor,
+            correlation_id=correlation_id,
+            fields={
+                "approval_id": approval_record.id,
+                "command_kind": "GLOBAL_APPROVAL",
+                "outcome": "RECEIVED",
+                "plan_id": approval_record.plan_id,
+                "plan_version": plan.version if plan is not None else None,
+                "task_state": task.status,
+            },
+        )
     try:
         approval = ApprovalService(db).approve(
             approval_id, actor=payload.actor, reason=payload.reason
         )
+        if context is not None:
+            _, task, plan = context
+            current = db.get(TaskRecord, task.id)
+            persist_provenance_event(
+                db,
+                task_id=task.id,
+                event_type=APPROVAL_COMMAND_SUCCEEDED,
+                actor=payload.actor,
+                correlation_id=correlation_id,
+                fields={
+                    "approval_id": approval.id,
+                    "approval_persistence": "APPROVED",
+                    "approval_state": approval.decision,
+                    "authority_validation": "PASSED",
+                    "command_kind": "GLOBAL_APPROVAL",
+                    "outcome": "APPROVAL_PERSISTED",
+                    "plan_id": approval.plan_id,
+                    "plan_version": plan.version if plan is not None else None,
+                    "task_state": current.status if current is not None else task.status,
+                },
+            )
         return _approval_read(approval, db)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ApprovalError as exc:
+    except (LookupError, ApprovalError, ValueError, PermissionError) as exc:
+        _record_global_command_failure(
+            db,
+            context=context,
+            approval_id=approval_id,
+            actor=payload.actor,
+            correlation_id=correlation_id,
+            error=exc,
+        )
+        if isinstance(exc, LookupError):
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        _record_global_command_failure(
+            db,
+            context=context,
+            approval_id=approval_id,
+            actor=payload.actor,
+            correlation_id=correlation_id,
+            error=exc,
+        )
+        raise
+
+
+def _approval_context(
+    approval_id: str, db: Session
+) -> tuple[ApprovalRecord, TaskRecord, PlanRecord | None] | None:
+    approval = db.get(ApprovalRecord, approval_id)
+    if approval is None:
+        return None
+    task = db.get(TaskRecord, approval.task_id)
+    if task is None:
+        return None
+    return approval, task, db.get(PlanRecord, approval.plan_id)
+
+
+def _record_global_command_failure(
+    db: Session,
+    *,
+    context: tuple[ApprovalRecord, TaskRecord, PlanRecord | None] | None,
+    approval_id: str,
+    actor: str,
+    correlation_id: str,
+    error: Exception,
+) -> None:
+    if context is None:
+        return
+    db.rollback()
+    approval, task, plan = context
+    current = db.get(TaskRecord, task.id)
+    persist_provenance_event(
+        db,
+        task_id=task.id,
+        event_type=APPROVAL_COMMAND_FAILED,
+        actor=actor,
+        correlation_id=correlation_id,
+        fields={
+            "approval_id": approval_id,
+            "authority_validation": "FAILED",
+            "command_kind": "GLOBAL_APPROVAL",
+            "error_category": safe_error_category(error),
+            "execution_initiation": "NOT_REQUESTED",
+            "outcome": "REJECTED",
+            "plan_id": approval.plan_id,
+            "plan_version": plan.version if plan is not None else None,
+            "task_state": current.status if current is not None else task.status,
+        },
+    )
 
 
 @router.post("/approvals/{approval_id}/reject", response_model=ApprovalRead)
