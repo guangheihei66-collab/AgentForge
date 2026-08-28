@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from ..analyst.models import AnalystReport
+
 
 class TaskSummaryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -42,6 +44,19 @@ class TaskDetailRead(BaseModel):
     audit: list[dict[str, Any]]
 
 
+class AnalystSynthesisRead(BaseModel):
+    status: str
+    report: AnalystReport | None = None
+    failure_category: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    plan_id: str | None = None
+    plan_version: int | None = None
+    artifact_path: str | None = None
+    content_hash: str | None = None
+    generated_at: datetime | None = None
+
+
 class ReportRead(BaseModel):
     task: TaskSummaryRead
     readiness: str
@@ -52,3 +67,4 @@ class ReportRead(BaseModel):
     evidence: list[dict[str, Any]]
     audit_count: int
     execution_count: int
+    analyst: AnalystSynthesisRead

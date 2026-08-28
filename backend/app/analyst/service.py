@@ -21,6 +21,7 @@ from ..storage.orm import AuditEventRecord, TaskRecord
 from .models import AnalystDraft, AnalystReport, AnalystSynthesisStatus
 from .package import EvidencePackageError, build_evidence_package
 from .prompts import ANALYST_SYSTEM_INSTRUCTION, build_analyst_prompt
+from .read_model import AnalystReadModel, read_analyst_report
 from .storage import AnalystArtifactError, AnalystArtifactStore
 from .validator import AnalystValidationError, validate_draft
 
@@ -57,6 +58,11 @@ class AnalystService:
         self.provider = provider
         self.artifacts = artifact_store or AnalystArtifactStore(
             data_root or r"D:\AgentProjectData\AgentForge"
+        )
+
+    def get_read_model(self, task_id: str) -> AnalystReadModel:
+        return read_analyst_report(
+            self.session, task_id=task_id, artifact_store=self.artifacts
         )
 
     def synthesize(
