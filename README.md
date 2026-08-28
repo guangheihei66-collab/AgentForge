@@ -80,6 +80,8 @@ Every new Task starts from a local Project. A Project owns one canonical local w
 
 After bounded diagnostic evidence, Runtime may choose one of four decisions: `CONTINUE`, `COMPLETE`, `FAIL`, or `REPLAN`. A `REPLAN` pauses execution and lets the configured provider propose capability-only remaining steps. Application policy, validation, deterministic resolution, and a fresh human approval all run before a successor version can execute; the previous plan and approval never authorize that successor.
 
+After a terminal Runtime outcome, the downstream AI Analyst receives only a bounded package of persisted Task, Plan, ToolExecution, Observation, Evidence, and lifecycle facts. It returns a strict structured assessment with evidence-linked findings, controlled risk severity, a release recommendation, prioritized next actions, and limitations. The Analyst cannot execute tools, approve plans, choose capabilities, change Project authority, or change Task status. The validated report is stored as a hash-verified JSON artifact under `D:\AgentProjectData\AgentForge\artifacts`; lifecycle metadata is added to the existing AuditEvent stream, so this feature adds no database table or migration. A provider or validation failure preserves the governed execution facts and is shown as a separate Analyst failure state.
+
 ## Security Design
 
 - Permission boundary: default-deny policy with explicit `SAFE_READ` and `APPROVED_EXEC` levels.
@@ -91,16 +93,17 @@ After bounded diagnostic evidence, Runtime may choose one of four decisions: `CO
 - Approval drift protection: changed capability, tool, parameters, plan version, or execution-relevant registry semantics invalidates execution.
 - Project isolation: ACTIVE Projects cannot share a canonical workspace; remote, UNC, traversal, junction/symlink, and cross-Project escapes are rejected.
 - Project lifecycle: archive is one-way and preserves history while blocking Task creation, pending approval, Runtime resume, and Replanning.
+- Analyst boundary: evidence is untrusted input data; prompt-injection text is ignored, evidence references are validated against same-task persisted records, and no chain-of-thought or raw provider output is stored or displayed.
 
 ## Demo Scenario
 
 The Release Verification Agent answers: “Is Release v2.0 ready for release?” The synthetic demo demonstrates:
 
 ```text
-Create Task → Generate Plan → Approve → Execute → Collect Evidence → Generate Report
+Create Task → Generate Plan → Approve → Execute → Collect Evidence → AI Analyst Report
 ```
 
-The controlled tools are `git_read`, `file_read`, and the predefined `test_run` profiles. The permission layer is default-deny and the workspace boundary rejects secret, system, and out-of-scope paths.
+The controlled tools are `git_read`, `file_read`, and the predefined `test_run` profiles. The permission layer is default-deny and the workspace boundary rejects secret, system, and out-of-scope paths. The final report distinguishes execution truth from derived analysis and links material findings back to persisted evidence IDs.
 
 ## Technology Stack
 
