@@ -28,7 +28,7 @@ Release Verification Agent: determine whether version 2.0 is ready for release.
 
 ## Current status
 
-Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation through Phase 10 release preparation are complete. Phase 11.1 added the deterministic AgentRuntime loop. Phase 11.2 added capability-first planning and approval-bound resolution. Phase 12 added the bounded OpenAI-compatible provider. Phase 13 added controlled hybrid re-planning. Phase 14 adds local Projects as execution-security boundaries: every new Task belongs to one ACTIVE Project with a canonical local workspace and an explicit semantic Capability allow-list.
+Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope freeze approved. Phase 2 foundation through Phase 10 release preparation are complete. Phase 11.1 added the deterministic AgentRuntime loop. Phase 11.2 added capability-first planning and approval-bound resolution. Phase 12 added the bounded OpenAI-compatible provider. Phase 13 added controlled hybrid re-planning. Phase 14 adds local Projects as execution-security boundaries: every new Task belongs to one ACTIVE Project with a canonical local workspace and an explicit semantic Capability allow-list. Phase 15A is complete on main: the current Agent Workspace preserves the approval safety boundary, native en-US/zh-CN localization is integrated across the product surfaces, and the release candidate is frozen pending one final human workflow test.
 
 The Phase 11.2 MVP capabilities are `repository_state -> git_read`, `project_metadata -> file_read`, and `test_verification -> test_run`. Resolution fails closed unless exactly one registered, enabled, permission-compatible, parameter-valid candidate exists. Legacy concrete-tool plans remain readable but cannot request Phase 11.2 approval or execute through the new Runtime.
 
@@ -51,6 +51,8 @@ Project Capability policy defaults to empty and future registry additions are ne
 - Phase 13 adds no database migration, persistent status vocabulary, dependency, or frontend setup.
 - Phase 14 adds `projects` and nullable `tasks.project_id` through an idempotent, non-destructive migration. Applying it to the live database requires a separately approved backup-and-migration operation.
 - Project roots must be existing local directories; remote/UNC/device roots and traversal, sibling-prefix, symlink, junction, reparse, or cross-Project escapes fail closed.
+- Native localization uses the approved i18next/react-i18next boundary. `agentforge.locale` stores only the selected locale, while goals, paths, identifiers, provider values, capability values, audit data, evidence references, and other machine/runtime values remain unchanged.
+- Dashboard and project selection await data loading without overriding the user's navigation target; this keeps the current Agent Workspace reachable during asynchronous hydration.
 
 ## Resolved bugs
 
@@ -60,3 +62,4 @@ Project Capability policy defaults to empty and future registry additions are ne
 
 - Run the separately approved live Phase 14 database backup and migration before using Projects with the existing runtime database.
 - Production platform capabilities such as managed persistence, RBAC, and write-capable tools remain future phases.
+- Final release gate: run the documented human smoke test on the running RC, including locale switching and one Repository Analyst Task. Do not create or execute that Task automatically; release/tag/version decisions require the human result.
