@@ -106,4 +106,3 @@ that normal startup creates no business records. A real Windows smoke then
 uses the user-facing entry, checks visible processes and ports, repeats the
 entry rapidly, exercises tray actions, and compares Task/Project/Approval/
 ToolExecution counts before and after startup.
-
