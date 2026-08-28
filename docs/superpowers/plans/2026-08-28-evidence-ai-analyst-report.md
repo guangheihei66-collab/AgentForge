@@ -463,7 +463,7 @@ do not fabricate the final report or silently use Mock for the live test.
 Keep commits reviewable and use conventional messages:
 
 1. `docs: specify evidence-grounded analyst report` (already created)
-2. `docs: plan analyst report implementation` 
+2. `docs: plan analyst report implementation`
 3. `test: define analyst report contracts`
 4. `feat: add bounded analyst evidence package`
 5. `feat: add analyst provider synthesis service`
