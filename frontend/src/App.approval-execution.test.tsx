@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { api } from './api/client'
@@ -31,7 +31,7 @@ describe('Agent approval-to-execution wiring', () => {
     vi.spyOn(api, 'executeTask').mockResolvedValue({ ...task, status: 'RUNNING' })
   })
 
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
   it('sends one bound approval-and-execute command from the Agent Workspace', async () => {
     render(<App />)
@@ -79,5 +79,30 @@ describe('Agent approval-to-execution wiring', () => {
       plan_version: 1,
       actor: 'operator',
     })
+  })
+
+  it('keeps Global Approval approval-only and never starts Agent execution', async () => {
+    render(<App />)
+    fireEvent.click(screen.getAllByRole('button', { name: /Approvals/i })[0])
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve only' }))
+
+    await waitFor(() => expect(api.approve).toHaveBeenCalledTimes(1))
+    expect(api.approve).toHaveBeenCalledWith('approval-1')
+    expect(api.approveAndExecuteTask).not.toHaveBeenCalled()
+    expect(api.executeTask).not.toHaveBeenCalled()
+  })
+
+  it('opens the selected task in Agent Workspace without a backend mutation', async () => {
+    render(<App />)
+    fireEvent.click(screen.getAllByRole('button', { name: /Approvals/i })[0])
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open in Agent Workspace' }))
+
+    expect(await screen.findByRole('heading', { name: 'Agent workspace' })).toBeInTheDocument()
+    expect(await screen.findByText(task.id)).toBeInTheDocument()
+    expect(api.approve).not.toHaveBeenCalled()
+    expect(api.approveAndExecuteTask).not.toHaveBeenCalled()
+    expect(api.executeTask).not.toHaveBeenCalled()
   })
 })

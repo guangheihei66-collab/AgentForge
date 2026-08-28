@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, CheckCircle2, FileText, ShieldCheck, XCircle } from 'lucide-react'
+import { AlertTriangle, Ban, Bot, CheckCircle2, FileText, ShieldCheck, XCircle } from 'lucide-react'
 import { PermissionPill, RiskPill, StatusPill } from '../components/StatusPill'
 import { PanelTitle } from './Dashboard'
 import type { ApprovalQueueItem, ResolvedExecutionSnapshot } from '../types'
@@ -7,7 +7,7 @@ const permission = (snapshot: ResolvedExecutionSnapshot) => snapshot.capability_
 const risk = (snapshot: ResolvedExecutionSnapshot) => snapshot.capability_id === 'repository_state' ? 'low' : 'medium'
 const parameters = (snapshot: ResolvedExecutionSnapshot) => Object.entries(snapshot.normalized_parameters).map(([key, value]) => `${key}: ${value}`).join(', ') || 'none'
 
-export function Approvals({ approvals, actionError, onApprove, onReject, onCancel }: { approvals: ApprovalQueueItem[]; actionError?: string | null; onApprove: (id: string) => void; onReject: (id: string) => void; onCancel: () => void }) {
+export function Approvals({ approvals, actionError, onApprove, onReject, onCancel, onOpenInAgentWorkspace }: { approvals: ApprovalQueueItem[]; actionError?: string | null; onApprove: (id: string) => void; onReject: (id: string) => void; onCancel: () => void; onOpenInAgentWorkspace: (taskId: string) => void }) {
   const selected = approvals[0]
   const snapshots = selected?.resolved_snapshot?.steps ?? []
   return <section className="page-stack">
@@ -25,7 +25,7 @@ export function Approvals({ approvals, actionError, onApprove, onReject, onCance
         </div>)}</div>
         <div className="plan-footer"><span><AlertTriangle size={15} /> Capability, tool, parameters, and registry semantics are approval-bound.</span><strong>Aggregate risk: <RiskPill value="Medium" /></strong></div>
       </div>
-      <aside className="panel decision-panel"><div className="decision-header"><StatusPill status="WAITING_APPROVAL" /><span>Plan v{selected.plan_version}</span></div><h3>{selected.task_title}</h3><p className="muted">Requested by {selected.requested_by}</p><div className="boundary"><span>Permission boundary</span><strong>Workspace-scoped only</strong><small>No shell access · no destructive actions · no secret files</small></div><div className="permission-list"><div><PermissionPill value="SAFE_READ" /><span>Repository and file metadata</span></div><div><PermissionPill value="APPROVED_EXEC" /><span>Predefined test profile</span></div></div><div className="decision-actions"><button type="button" className="button button-approve" onClick={() => onApprove(selected.id)}><CheckCircle2 size={16} /> Approve</button><button type="button" className="button button-danger" onClick={() => onReject(selected.id)}><XCircle size={16} /> Reject</button><button type="button" className="button button-muted" onClick={onCancel}><Ban size={16} /> Cancel task</button></div><p className="audit-note">Your decision will be recorded in the audit log.</p></aside>
+      <aside className="panel decision-panel"><div className="decision-header"><StatusPill status="WAITING_APPROVAL" /><span>Plan v{selected.plan_version}</span></div><h3>{selected.task_title}</h3><p className="muted">Requested by {selected.requested_by}</p><div className="boundary"><span>Permission boundary</span><strong>Workspace-scoped only</strong><small>No shell access · no destructive actions · no secret files</small></div><div className="permission-list"><div><PermissionPill value="SAFE_READ" /><span>Repository and file metadata</span></div><div><PermissionPill value="APPROVED_EXEC" /><span>Predefined test profile</span></div></div><div className="approval-only-note" role="note"><AlertTriangle size={16} /><span>Approving here records the approval only. It does not start Agent execution.</span></div><div className="decision-actions"><button type="button" className="button button-approve" onClick={() => onApprove(selected.id)}><CheckCircle2 size={16} /> Approve only</button><button type="button" className="button button-muted" onClick={() => onOpenInAgentWorkspace(selected.task_id)}><Bot size={16} /> Open in Agent Workspace</button><button type="button" className="button button-danger" onClick={() => onReject(selected.id)}><XCircle size={16} /> Reject</button><button type="button" className="button button-muted" onClick={onCancel}><Ban size={16} /> Cancel task</button></div><p className="audit-note">Your decision will be recorded in the audit log.</p></aside>
     </div> : <div className="panel empty-state large">No pending approvals. Tasks will appear here after their plans are validated.</div>}
   </section>
 }
