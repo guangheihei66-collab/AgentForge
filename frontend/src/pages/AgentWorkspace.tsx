@@ -50,7 +50,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
     </form>
     {currentPlan && <AgentPlanCard plan={currentPlan} rawGoal={detail?.task.goal ?? ''} />}
     {currentApproval && onApprove && onReject && <AgentApprovalCard item={currentApproval} onApprove={onApprove} onReject={onReject} />}
-    {detail?.approvals.some(approval => approval.decision === 'APPROVED' && approval.plan_id === currentPlan?.id && approval.plan_version === currentPlan?.version) && onExecute && <div className="panel"><div className="panel-title"><h3>Execution</h3><span>Governed execution</span></div><p>The current Plan has an authoritative approval. Execution is available for retry if needed.</p><button className="button button-primary" onClick={() => void onExecute()}>Execute approved Plan</button></div>}
+    {detail?.approvals.some(approval => approval.decision === 'APPROVED' && approval.plan_id === currentPlan?.id && approval.plan_version === currentPlan?.version) && onExecute && <div className="panel"><div className="panel-title"><h3>Execution</h3><span>Governed execution</span></div><p>The current Plan has an authoritative approval. Resume through the composite approval command if execution has not started.</p><button type="button" className="button button-primary" onClick={() => void onExecute()}>Resume approved execution</button></div>}
     {detail && report ? <AgentTimeline entries={timeline} /> : !planning && <div className="panel"><div className="panel-title"><h3>Agent Timeline</h3><span>Authoritative lifecycle</span></div><p>Start an Agent to see the persisted Plan, Approval, execution, observations, and Evidence.</p></div>}
     {detail && report && <AgentReportCard detail={detail} report={report} />}
   </section>

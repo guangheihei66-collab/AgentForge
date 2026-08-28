@@ -178,6 +178,37 @@ def test_valid_pending_approval_is_persisted_then_runtime_invoked_once(db_sessio
     assert started[2]["execution_initiation"] == "STARTED"
 
 
+def test_already_approved_plan_can_resume_once_through_composite_command(db_session):
+    task = make_task(db_session)
+    plan, approval = make_pending(db_session, task)
+    ApprovalService(db_session).approve(approval.id, actor="operator")
+    runtime = RecordingRuntime(make_result(task.id, plan.id))
+
+    result = command(
+        db_session,
+        runtime,
+        task_id=task.id,
+        approval_id=approval.id,
+        plan_id=plan.id,
+    )
+
+    assert result is runtime.result
+    assert db_session.get(ApprovalRecord, approval.id).decision == "APPROVED"
+    assert db_session.get(TaskRecord, task.id).status == TaskStatus.RUNNING.value
+    assert len(runtime.calls) == 1
+    provenance = audit_payloads(db_session, task.id)
+    received = next(item for item in provenance if item[0] == "AGENT_APPROVE_AND_EXECUTE_COMMAND_RECEIVED")
+    succeeded = next(item for item in provenance if item[0] == "APPROVAL_COMMAND_SUCCEEDED")
+    requested = next(item for item in provenance if item[0] == "EXECUTION_INITIATION_REQUESTED")
+    started = next(item for item in provenance if item[0] == "EXECUTION_INITIATION_STARTED")
+    assert received[1] == succeeded[1] == requested[1] == started[1]
+    assert succeeded[2]["approval_state"] == "APPROVED"
+    assert succeeded[2]["approval_persistence"] == "ALREADY_APPROVED"
+    assert succeeded[2]["outcome"] == "APPROVAL_REUSED"
+    assert requested[2]["execution_initiation"] == "REQUESTED"
+    assert started[2]["execution_initiation"] == "STARTED"
+
+
 def test_approval_bound_to_another_task_is_rejected_without_runtime(db_session):
     first = make_task(db_session, "First Agent command test")
     second = make_task(db_session, "Second Agent command test")

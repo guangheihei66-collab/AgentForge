@@ -36,11 +36,42 @@ describe('Agent approval-to-execution wiring', () => {
   it('sends one bound approval-and-execute command from the Agent Workspace', async () => {
     render(<App />)
     fireEvent.click((await screen.findAllByText(task.title))[0])
-    fireEvent.click(screen.getByRole('button', { name: 'Agent' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Agent' })[0])
     await waitFor(() => expect(api.getTaskDetail).toHaveBeenCalledWith(task.id))
     fireEvent.click(await screen.findByRole('button', { name: 'Approve & Execute' }))
     await waitFor(() => expect(api.approveAndExecuteTask).toHaveBeenCalledTimes(1))
     expect(api.approve).not.toHaveBeenCalled()
+    expect(api.executeTask).not.toHaveBeenCalled()
+    expect(api.approveAndExecuteTask).toHaveBeenCalledWith(task.id, {
+      approval_id: 'approval-1',
+      plan_id: 'plan-1',
+      plan_version: 1,
+      actor: 'operator',
+    })
+  })
+
+  it('routes an already-approved Agent retry through the composite command', async () => {
+    const runningTask = { ...task, status: 'RUNNING' as const }
+    vi.mocked(api.listTasks).mockResolvedValue([runningTask])
+    vi.mocked(api.getPendingApprovals).mockResolvedValue([])
+    vi.mocked(api.getTaskDetail).mockResolvedValue({
+      task: runningTask,
+      plans: [plan],
+      approvals: [{ ...pending, approver: 'operator', decision: 'APPROVED' }],
+      executions: [],
+      evidence: [],
+      audit: [],
+    })
+    vi.mocked(api.getReport).mockResolvedValue({ task: runningTask, readiness: 'PENDING', summary: 'Awaiting execution', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 0, execution_count: 0 })
+    vi.mocked(api.approveAndExecuteTask).mockResolvedValue({ task_id: task.id, plan_id: plan.id, plan_version: plan.version, state: 'COMPLETED', decision: 'COMPLETE', completed_steps: 1, observations: [], successor_plan_id: null, successor_plan_version: null, approval_id: null })
+    vi.mocked(api.executeTask).mockClear()
+
+    render(<App />)
+    fireEvent.click((await screen.findAllByText(task.title))[0])
+    fireEvent.click(screen.getAllByRole('button', { name: 'Agent' })[0])
+    await waitFor(() => expect(api.getTaskDetail).toHaveBeenCalledWith(task.id))
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume approved execution' }))
+    await waitFor(() => expect(api.approveAndExecuteTask).toHaveBeenCalledTimes(1))
     expect(api.executeTask).not.toHaveBeenCalled()
     expect(api.approveAndExecuteTask).toHaveBeenCalledWith(task.id, {
       approval_id: 'approval-1',

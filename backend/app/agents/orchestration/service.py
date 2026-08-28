@@ -20,11 +20,19 @@ from ...audit.provenance import (
 from ...domain.states.task_state import TaskStatus
 from ...services.plan_repository import PlanRepository
 from ...services.task_service import TaskService
-from ...storage.orm import ApprovalRecord, TaskRecord, ToolExecutionRecord
+from ...storage.orm import AuditEventRecord, ApprovalRecord, TaskRecord, ToolExecutionRecord
 
 
 class AgentExecutionInitiationError(RuntimeError):
     """Raised after a persisted Approval cannot start governed Runtime work."""
+
+
+_COMPOSITE_PROVENANCE_EVENTS = {
+    AGENT_APPROVE_AND_EXECUTE_COMMAND_RECEIVED,
+    EXECUTION_INITIATION_REQUESTED,
+    EXECUTION_INITIATION_STARTED,
+    EXECUTION_INITIATION_FAILED,
+}
 
 
 class AgentApprovalExecutionService:
@@ -50,6 +58,9 @@ class AgentApprovalExecutionService:
     ) -> RuntimeResult:
         correlation_id = command_correlation_id(correlation_id)
         command_task = self.session.get(TaskRecord, task_id)
+        prior_composite_attempt = (
+            command_task is not None and self._has_composite_provenance(task_id)
+        )
         if command_task is not None:
             persist_provenance_event(
                 self.session,
@@ -67,11 +78,12 @@ class AgentApprovalExecutionService:
                 },
             )
         try:
-            task, plan, approval = self._validate_command(
+            task, plan, approval, approval_reused = self._validate_command(
                 task_id=task_id,
                 approval_id=approval_id,
                 plan_id=plan_id,
                 plan_version=plan_version,
+                prior_composite_attempt=prior_composite_attempt,
             )
         except Exception as exc:
             self._record_command_failure(
@@ -85,19 +97,20 @@ class AgentApprovalExecutionService:
             )
             raise
 
-        try:
-            ApprovalService(self.session).approve(approval.id, actor=actor)
-        except Exception as exc:
-            self._record_command_failure(
-                task=command_task,
-                approval_id=approval_id,
-                plan_id=plan_id,
-                plan_version=plan_version,
-                actor=actor,
-                correlation_id=correlation_id,
-                error=exc,
-            )
-            raise
+        if not approval_reused:
+            try:
+                ApprovalService(self.session).approve(approval.id, actor=actor)
+            except Exception as exc:
+                self._record_command_failure(
+                    task=command_task,
+                    approval_id=approval_id,
+                    plan_id=plan_id,
+                    plan_version=plan_version,
+                    actor=actor,
+                    correlation_id=correlation_id,
+                    error=exc,
+                )
+                raise
 
         self._record_command_succeeded(
             task=task,
@@ -106,6 +119,7 @@ class AgentApprovalExecutionService:
             plan_version=plan.version,
             actor=actor,
             correlation_id=correlation_id,
+            approval_reused=approval_reused,
         )
         self._record_initiation_requested(
             task=task,
@@ -160,7 +174,8 @@ class AgentApprovalExecutionService:
         approval_id: str,
         plan_id: str,
         plan_version: int,
-    ) -> tuple[TaskRecord, object, ApprovalRecord]:
+        prior_composite_attempt: bool,
+    ) -> tuple[TaskRecord, object, ApprovalRecord, bool]:
         task = self.session.get(TaskRecord, task_id)
         if task is None:
             raise LookupError(f"Task not found: {task_id}")
@@ -176,9 +191,35 @@ class AgentApprovalExecutionService:
             raise LookupError(f"Approval not found: {approval_id}")
         if approval.task_id != task_id or approval.plan_id != plan.id:
             raise ApprovalError("Approval is not bound to this Task and current Plan")
-        if approval.decision != "PENDING":
+        if approval.decision == "PENDING":
+            return task, plan, approval, False
+        if approval.decision != "APPROVED":
             raise ApprovalError(f"Approval is already decided: {approval.decision}")
-        return task, plan, approval
+        if task.status != TaskStatus.RUNNING.value:
+            raise ApprovalError(f"Approval is already decided: {approval.decision}")
+        if self.session.query(ToolExecutionRecord).filter_by(task_id=task_id).first() is not None:
+            raise ApprovalError(f"Approval is already decided: {approval.decision}")
+        if prior_composite_attempt:
+            raise ApprovalError(f"Approval is already decided: {approval.decision}")
+        document = approval.resolved_snapshot
+        if not isinstance(document, dict):
+            raise ApprovalError("Approval has no Project execution authority")
+        from ...projects.service import ProjectService
+        try:
+            ProjectService(self.session).assert_authority(
+                task.project_id, document.get("project_authority")
+            )
+        except (PermissionError, ValueError, TypeError) as exc:
+            raise ApprovalError(
+                "Archived or changed Project cannot resume approved execution"
+            ) from exc
+        return task, plan, approval, True
+
+    def _has_composite_provenance(self, task_id: str) -> bool:
+        return self.session.query(AuditEventRecord).filter(
+            AuditEventRecord.task_id == task_id,
+            AuditEventRecord.event_type.in_(_COMPOSITE_PROVENANCE_EVENTS),
+        ).first() is not None
 
     def _record_initiation_failure(
         self,
@@ -268,6 +309,7 @@ class AgentApprovalExecutionService:
         plan_version: int,
         actor: str,
         correlation_id: str,
+        approval_reused: bool,
     ) -> None:
         persist_provenance_event(
             self.session,
@@ -277,11 +319,11 @@ class AgentApprovalExecutionService:
             correlation_id=correlation_id,
             fields={
                 "approval_id": approval.id,
-                "approval_persistence": "APPROVED",
+                "approval_persistence": "ALREADY_APPROVED" if approval_reused else "APPROVED",
                 "approval_state": approval.decision,
                 "authority_validation": "PASSED",
                 "command_kind": "AGENT_APPROVE_AND_EXECUTE",
-                "outcome": "APPROVAL_PERSISTED",
+                "outcome": "APPROVAL_REUSED" if approval_reused else "APPROVAL_PERSISTED",
                 "plan_id": plan_id,
                 "plan_version": plan_version,
                 "task_state": task.status,

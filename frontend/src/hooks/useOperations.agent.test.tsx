@@ -81,13 +81,19 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     expect(result.current.agentError).toContain('INVALID_RESPONSE')
   })
 
-  it('executes only after an authoritative current Plan is approved', async () => {
+  it('resumes only after an authoritative current Plan is approved', async () => {
     apiMock.getTaskDetail.mockResolvedValue({ ...detail, approvals: [{ ...approval, decision: 'APPROVED' }] })
-    apiMock.executeTask.mockResolvedValue(task)
+    apiMock.approveAndExecuteTask.mockResolvedValue({ task_id: 'task-1', plan_id: 'plan-1', plan_version: 1, state: 'COMPLETED', decision: 'COMPLETE', completed_steps: 1, observations: [], successor_plan_id: null, successor_plan_version: null, approval_id: null })
     const { result } = renderHook(() => useOperations())
     await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL') })
     await act(async () => { await result.current.executeAgentTask() })
-    expect(apiMock.executeTask).toHaveBeenCalledWith('task-1')
+    expect(apiMock.approveAndExecuteTask).toHaveBeenCalledWith('task-1', {
+      approval_id: 'approval-1',
+      plan_id: 'plan-1',
+      plan_version: 1,
+      actor: 'operator',
+    })
+    expect(apiMock.executeTask).not.toHaveBeenCalled()
   })
 
   it('uses one composite command and never starts Agent execution through the old two-hop APIs', async () => {

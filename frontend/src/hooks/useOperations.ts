@@ -212,11 +212,16 @@ export function useOperations() {
     if (executionInFlight.current) return
     const currentDetail = authoritativeDetail ?? detail
     const currentPlan = currentDetail!.plans.reduce((latest, candidate) => !latest || candidate.version > latest.version ? candidate : latest, undefined as TaskDetail['plans'][number] | undefined)
-    const approved = currentPlan && currentDetail!.approvals.some(item => item.plan_id === currentPlan.id && item.plan_version === currentPlan.version && item.decision === 'APPROVED')
+    const approved = currentPlan && currentDetail!.approvals.find(item => item.plan_id === currentPlan.id && item.plan_version === currentPlan.version && item.decision === 'APPROVED')
     if (!approved) throw new Error('Execution requires an approved current Plan.')
     executionInFlight.current = true
     try {
-      await api.executeTask(selectedId)
+      await api.approveAndExecuteTask(selectedId, {
+        approval_id: approved.id,
+        plan_id: currentPlan.id,
+        plan_version: currentPlan.version,
+        actor: 'operator',
+      })
       await refreshTask(selectedId)
     } finally {
       executionInFlight.current = false
