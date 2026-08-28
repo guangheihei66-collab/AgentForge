@@ -61,6 +61,7 @@ class LLMRequest:
     prompt: str
     context: Mapping[str, Any]
     output_schema: Mapping[str, Any]
+    system_instruction: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,9 @@ class LLMProvider(Protocol):
 
     def generate_replan(self, request: LLMRequest) -> LLMResponse:
         """Return untrusted capability-only remaining-plan data."""
+
+    def generate_analyst(self, request: LLMRequest) -> LLMResponse:
+        """Return untrusted evidence-grounded synthesis data."""
 
     def test_connection(self) -> LLMResponse:
         """Perform one bounded, non-plan compatibility check."""

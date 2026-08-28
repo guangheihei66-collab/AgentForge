@@ -68,6 +68,15 @@ class OpenAICompatibleProvider:
             max_tokens=self.config.max_output_tokens,
         )
 
+    def generate_analyst(self, request: LLMRequest) -> LLMResponse:
+        return self._complete(
+            prompt=request.prompt,
+            output_schema=request.output_schema,
+            schema_name="agentforge_analyst_report",
+            max_tokens=self.config.max_output_tokens,
+            system_instruction=request.system_instruction,
+        )
+
     def test_connection(self) -> LLMResponse:
         response = self._complete(
             prompt="Return a JSON object with status set to ok.",
@@ -91,6 +100,7 @@ class OpenAICompatibleProvider:
         output_schema: Mapping[str, Any],
         schema_name: str,
         max_tokens: int,
+        system_instruction: str = "",
     ) -> LLMResponse:
         response_format: dict[str, Any] = {"type": "json_object"}
         if self.config.structured_output_mode.value == StructuredOutputMode.JSON_SCHEMA.value:
@@ -105,7 +115,10 @@ class OpenAICompatibleProvider:
         request_payload = {
             "model": self.config.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_BOUNDARY},
+                {
+                    "role": "system",
+                    "content": system_instruction or SYSTEM_BOUNDARY,
+                },
                 {"role": "user", "content": prompt},
             ],
             "max_tokens": max_tokens,
