@@ -79,9 +79,23 @@ def _validated_base_url(value: str) -> tuple[str, str | None]:
     return "", "Base URL must use HTTPS except on loopback"
 
 
-def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderConfig:
+def load_provider_config(
+    environ: Mapping[str, str] | None = None,
+    *,
+    allow_default_mock: bool = True,
+) -> ProviderConfig:
     values = os.environ if environ is None else environ
-    provider = values.get("AGENTFORGE_LLM_PROVIDER", "mock").strip().lower()
+    raw_provider = values.get("AGENTFORGE_LLM_PROVIDER")
+    if raw_provider is None or not raw_provider.strip():
+        if allow_default_mock:
+            provider = "mock"
+        else:
+            return ProviderConfig(
+                provider="unconfigured",
+                validation_error="AGENTFORGE_LLM_PROVIDER is required",
+            )
+    else:
+        provider = raw_provider.strip().lower()
     if provider not in {"mock", "openai-compatible"}:
         raise ProviderError(
             ProviderErrorCategory.NOT_CONFIGURED,

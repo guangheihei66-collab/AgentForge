@@ -32,7 +32,7 @@ def _provider_http_error(exc: ProviderError) -> HTTPException:
 
 def get_llm_provider() -> LLMProvider:
     try:
-        return build_provider(load_provider_config())
+        return build_provider(load_provider_config(allow_default_mock=False))
     except ProviderError as exc:
         raise _provider_http_error(exc) from None
 

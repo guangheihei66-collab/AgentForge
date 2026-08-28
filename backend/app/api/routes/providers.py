@@ -53,7 +53,7 @@ connection_state = ConnectionStateStore()
 
 def _configuration() -> ProviderConfig:
     try:
-        return load_provider_config()
+        return load_provider_config(allow_default_mock=False)
     except ProviderError as exc:
         raise HTTPException(
             status_code=503,
@@ -63,7 +63,7 @@ def _configuration() -> ProviderConfig:
 
 def get_status_provider() -> LLMProvider:
     try:
-        return build_provider(load_provider_config())
+        return build_provider(load_provider_config(allow_default_mock=False))
     except ProviderError as exc:
         raise HTTPException(
             status_code=503,
@@ -82,7 +82,7 @@ def _read_status(config: ProviderConfig) -> ProviderStatusRead:
     return ProviderStatusRead(
         provider=config.provider,
         configured=config.configured,
-        model=config.model or "deterministic-mock",
+        model=config.model or "not-configured",
         credential_configured=config.credential_configured,
         structured_output_mode=config.structured_output_mode.value,
         connection_status=status,

@@ -53,7 +53,7 @@ def _build_runtime(db: Session, task_id: str) -> AgentRuntime:
         validator,
         data_root / "artifacts" / task_id,
     )
-    provider = build_provider(load_provider_config())
+    provider = build_provider(load_provider_config(allow_default_mock=False))
     return AgentRuntime(
         db,
         RuntimeExecutor(gateway),
@@ -93,6 +93,7 @@ def approve_and_execute_task(
             plan_id=payload.plan_id,
             plan_version=payload.plan_version,
             actor=payload.actor,
+            language=payload.language,
         )
         return _serialize_result(result)
     except LookupError as exc:

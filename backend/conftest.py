@@ -6,6 +6,9 @@ from pathlib import Path
 
 
 os.environ["AGENTFORGE_DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
+# Product routes require an explicit provider. Tests opt into the deterministic
+# provider without changing the user's process or machine configuration.
+os.environ.setdefault("AGENTFORGE_LLM_PROVIDER", "mock")
 
 # The documented backend test command runs from ``backend``.  Add the
 # repository root so tests can exercise the root-level launcher package

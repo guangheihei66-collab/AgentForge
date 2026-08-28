@@ -208,6 +208,11 @@ def _map_plan(plan: PlanRecord) -> dict[str, Any]:
         "id": plan.id,
         "version": plan.version,
         "validation_status": plan.validation_status,
+        "analysis_profile": (
+            raw.get("analysis_profile")
+            if isinstance(raw.get("analysis_profile"), str)
+            else None
+        ),
         "summary": _redact_text(raw.get("summary")),
         "steps": steps,
     }

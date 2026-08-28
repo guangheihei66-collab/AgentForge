@@ -24,7 +24,9 @@ from ..providers.base import (
 )
 from .prompts import build_planning_prompt
 from ...metadata_manifest import build_metadata_manifest
+from ...contracts.analysis import RELEASE_READINESS_PROFILE
 from .schemas import PlanContract
+from .quality import validate_plan_quality
 from .validator import PlanValidationError, PlanValidator
 
 
@@ -72,12 +74,18 @@ class PlannerAgent:
         self.session.commit()
         stage = "provider"
         try:
+            request_context = {
+                **(context or {}),
+                "authorized_capability_ids": list(
+                    project_context.allowed_capability_ids
+                ),
+            }
             request = LLMRequest(
                 prompt=build_planning_prompt(
                     task.goal,
                     effective_registry,
                     {
-                        **(context or {}),
+                        **request_context,
                         "project": {
                             "name": project.name,
                             "environment": project.environment,
@@ -87,17 +95,33 @@ class PlannerAgent:
                         "metadata_manifest": list(metadata_manifest),
                     },
                 ),
-                context=context or {},
+                context=request_context,
                 output_schema=PlanContract.model_json_schema(),
             )
             response = self.provider.generate_plan(request)
             stage = "plan_validation"
             plan = validator.validate(dict(response.payload), project_context.workspace_root)
+            analysis_profile = (context or {}).get("analysis_profile")
+            validate_plan_quality(
+                plan,
+                analysis_profile=analysis_profile
+                if isinstance(analysis_profile, str)
+                else None,
+                authorized_capability_ids=project_context.allowed_capability_ids,
+            )
             stage = "capability_resolution"
             record = self.plans.create(
                 task_id=task_id,
                 version=self.plans.next_version(task_id),
-                plan_json={**plan.model_dump(mode="json"), "resolved_steps": []},
+                plan_json={
+                    **plan.model_dump(mode="json"),
+                    "resolved_steps": [],
+                    **(
+                        {"analysis_profile": RELEASE_READINESS_PROFILE}
+                        if analysis_profile == RELEASE_READINESS_PROFILE
+                        else {}
+                    ),
+                },
                 validation_status="VALID",
             )
             resolved_steps = []
@@ -138,6 +162,11 @@ class PlannerAgent:
                 **plan.model_dump(mode="json"),
                 "resolved_steps": resolved_steps,
                 "project_authority": project_context.authority_snapshot().to_dict(),
+                **(
+                    {"analysis_profile": RELEASE_READINESS_PROFILE}
+                    if analysis_profile == RELEASE_READINESS_PROFILE
+                    else {}
+                ),
             }
             self._audit_llm(
                 task_id,

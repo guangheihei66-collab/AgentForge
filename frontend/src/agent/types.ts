@@ -13,6 +13,7 @@ export type AgentTimelineKind =
   | 'SUCCESSOR_PLAN_CREATED'
   | 'COMPLETED'
   | 'FAILED'
+  | 'UNKNOWN_EVENT'
 
 export type AgentTimelineEntry = {
   id: string

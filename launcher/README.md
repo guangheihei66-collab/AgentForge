@@ -33,7 +33,10 @@ must be created explicitly through the documented demo flow.
 
 The launcher reads the optional ignored file `launcher/.env.local` for safe
 non-secret provider settings. Process environment variables take precedence;
-credentials stay outside source control.
+credentials stay outside source control. Product mode does not silently fall
+back to Mock: configure `AGENTFORGE_LLM_PROVIDER` explicitly, or the backend
+reports the provider as not configured. `mock` is an intentional offline
+development/test mode and is labeled `MOCK` by diagnostics.
 
 Closing the compact window hides it to the system tray. Tray commands are
 `Open AgentForge`, `Open Launcher`, `Stop Services`, `Restart Services`, and

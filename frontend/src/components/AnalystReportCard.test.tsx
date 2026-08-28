@@ -2,6 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AnalystReportCard } from './AnalystReportCard'
 import type { AnalystSynthesis } from '../types'
+import { i18n } from '../i18n'
 
 const success: AnalystSynthesis = {
   status: 'SUCCEEDED',
@@ -41,12 +42,15 @@ const success: AnalystSynthesis = {
       evidence_refs: ['evidence-1'],
     }],
     limitations: ['External deployment checks were not included.'],
-    evidence_coverage: { available_count: 1, referenced_count: 1, truncated: false, notes: [] },
+    evidence_coverage: { available_count: 1, referenced_count: 1, truncated: false, sufficiency: 'PARTIAL', notes: [] },
   },
 }
 
 describe('Analyst report', () => {
-  afterEach(() => cleanup())
+  afterEach(async () => {
+    cleanup()
+    await i18n.changeLanguage('en-US')
+  })
 
   it('renders evidence-grounded findings, recommendation, actions, and limitations', () => {
     render(<AnalystReportCard analyst={success} />)
@@ -76,5 +80,30 @@ describe('Analyst report', () => {
 
     expect(screen.getAllByText(/analysis is being generated/i)).toHaveLength(2)
     expect(screen.queryByText('deterministic-mock')).not.toBeInTheDocument()
+  })
+
+  it('renders evidence sufficiency as an explicit analyst state', () => {
+    render(<AnalystReportCard analyst={success} />)
+
+    expect(screen.getByTestId('analyst-evidence-sufficiency')).toHaveTextContent('Partial evidence')
+  })
+
+  it('localizes analyst labels and enum copy while preserving evidence identifiers', async () => {
+    await i18n.changeLanguage('zh-CN')
+    render(<AnalystReportCard analyst={success} />)
+
+    expect(screen.getByText('AI 项目分析')).toBeInTheDocument()
+    expect(screen.getByText('整体评估')).toBeInTheDocument()
+    expect(screen.getByText('发布建议')).toBeInTheDocument()
+    expect(screen.getByText('关键发现')).toBeInTheDocument()
+    expect(screen.getByText('判断依据')).toBeInTheDocument()
+    expect(screen.getByText('证据引用')).toBeInTheDocument()
+    expect(screen.getByText('建议操作')).toBeInTheDocument()
+    expect(screen.getByText('下一步行动')).toBeInTheDocument()
+    expect(screen.getByText('限制与未知项')).toBeInTheDocument()
+    expect(screen.getByText('有条件可以发布')).toBeInTheDocument()
+    expect(screen.getByText('中')).toBeInTheDocument()
+    expect(screen.getByTestId('analyst-evidence-sufficiency')).toHaveTextContent('部分证据')
+    expect(screen.getAllByText('evidence-1')).toHaveLength(2)
   })
 })

@@ -54,6 +54,12 @@ class AnalystSynthesisStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class EvidenceSufficiency(StrEnum):
+    SUFFICIENT = "SUFFICIENT"
+    PARTIAL = "PARTIAL"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
 AnalystCategory = Literal[
     "release", "security", "quality", "operational", "evidence"
 ]
@@ -67,6 +73,7 @@ class EvidenceCoverage(StrictModel):
     available_count: int = Field(ge=0, le=100)
     referenced_count: int = Field(ge=0, le=100)
     truncated: bool
+    sufficiency: EvidenceSufficiency = EvidenceSufficiency.INSUFFICIENT
     notes: list[ShortText] = Field(default_factory=list, max_length=8)
 
 
@@ -110,3 +117,4 @@ class AnalystReport(AnalystDraft):
     provider: Identifier
     model: Identifier
     generated_at: datetime
+    language: Literal["en-US", "zh-CN"] = "en-US"

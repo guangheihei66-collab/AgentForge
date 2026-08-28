@@ -8,6 +8,7 @@ from .models import (
     AnalystSeverity,
     AnalystSynthesisStatus,
     EvidenceCoverage,
+    EvidenceSufficiency,
     OverallStatus,
     ReleaseRecommendation,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "AnalystSeverity",
     "AnalystSynthesisStatus",
     "EvidenceCoverage",
+    "EvidenceSufficiency",
     "OverallStatus",
     "ReleaseRecommendation",
 ]

@@ -1,7 +1,7 @@
 """Approval API contracts."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +24,7 @@ class ApproveAndExecuteRequest(BaseModel):
     plan_id: str = Field(min_length=36, max_length=36)
     plan_version: int = Field(ge=1)
     actor: str = Field(min_length=1, max_length=200)
+    language: Literal["en-US", "zh-CN"] = "en-US"
 
 
 class ApprovalRead(BaseModel):

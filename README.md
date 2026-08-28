@@ -113,7 +113,16 @@ Frontend: React, TypeScript, Vite, Tailwind CSS.
 
 AI boundary: a unified `LLMProvider` interface supports the deterministic mock and a bounded OpenAI-compatible HTTP transport. The model proposes semantic capabilities only; validation, concrete tool resolution, approval, Runtime, and ToolGateway remain application-controlled.
 
-Provider selection is environment-only. The default is `AGENTFORGE_LLM_PROVIDER=mock`. To opt into the OpenAI-compatible transport, set `AGENTFORGE_LLM_PROVIDER=openai-compatible` plus the base URL, model, and API key documented in `.env.example`. Non-local endpoints require HTTPS. Credentials are never returned by the status API or editable in the console, and connection tests run only after an explicit operator action.
+Provider selection is environment-only. Product mode requires an explicit
+`AGENTFORGE_LLM_PROVIDER` setting and fails closed when it is missing or
+invalid. Set `AGENTFORGE_LLM_PROVIDER=mock` only for an intentional offline
+development/test run; the deterministic provider is labeled `MOCK` in
+diagnostics and is never a silent production fallback. To use the
+OpenAI-compatible transport, set `AGENTFORGE_LLM_PROVIDER=openai-compatible`
+plus the base URL, model, and API key documented in `.env.example`. Non-local
+endpoints require HTTPS. Credentials are never returned by the status API or
+editable in the console, and connection tests run only after an explicit
+operator action.
 
 The MVP uses a custom state machine and three allowlisted tools: Git read, File read, and predefined Test profiles.
 

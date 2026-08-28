@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError, replace
 import json
 
 import httpx
+from fastapi import HTTPException
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -66,6 +67,27 @@ def test_default_configuration_selects_mock():
     assert config.max_output_tokens == 1200
     assert config.configured is True
     assert config.credential_configured is False
+
+
+def test_product_mode_without_provider_is_not_silent_mock():
+    config = load_provider_config({}, allow_default_mock=False)
+
+    assert config.provider == "unconfigured"
+    assert config.configured is False
+    assert config.credential_configured is False
+    with pytest.raises(ProviderError) as exc:
+        build_provider(config)
+    assert exc.value.category is ProviderErrorCategory.NOT_CONFIGURED
+
+
+def test_product_planner_dependency_fails_closed_without_provider(monkeypatch):
+    monkeypatch.delenv("AGENTFORGE_LLM_PROVIDER", raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        get_llm_provider()
+
+    assert exc.value.status_code == 503
+    assert "NOT_CONFIGURED" in str(exc.value.detail)
 
 
 @pytest.mark.parametrize("mode", ["json_schema", "json_object"])
@@ -195,6 +217,43 @@ def test_mock_provider_is_deterministic_and_network_free():
     assert first.provider == "mock"
     assert provider.test_connection().payload == {"status": "ok"}
     assert SECRET not in json.dumps(dict(first.payload))
+
+
+def test_release_readiness_mock_plan_covers_authorized_evidence_dimensions(
+    db_session,
+):
+    task = create_project_task(
+        db_session,
+        title="Release readiness planning",
+        goal="全面分析项目是否适合发布，找出主要风险并给出证据。",
+    )
+
+    plan = PlannerAgent(db_session, MockLLMProvider()).create_plan(
+        task.id, context={"analysis_profile": "release_readiness"}
+    )
+
+    assert {
+        step["capability_id"] for step in plan.plan_json["steps"]
+    } == {"repository_state", "project_metadata", "test_verification"}
+
+
+def test_release_readiness_mock_plan_never_invents_unauthorized_capabilities():
+    provider = MockLLMProvider()
+
+    response = provider.generate_plan(
+        LLMRequest(
+            prompt="bounded",
+            context={
+                "analysis_profile": "release_readiness",
+                "authorized_capability_ids": ["repository_state"],
+            },
+            output_schema={},
+        )
+    )
+
+    assert [step["capability_id"] for step in response.payload["steps"]] == [
+        "repository_state"
+    ]
 
 
 def valid_plan() -> dict:

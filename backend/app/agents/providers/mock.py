@@ -1,6 +1,7 @@
 """Deterministic provider used by local development and tests."""
 
 from .base import LLMRequest, LLMResponse
+from ...contracts.analysis import RELEASE_READINESS_CAPABILITIES
 
 
 class MockLLMProvider:
@@ -8,7 +9,49 @@ class MockLLMProvider:
     model_name = "deterministic-mock"
 
     def generate_plan(self, request: LLMRequest) -> LLMResponse:
-        del request
+        if request.context.get("analysis_profile") == "release_readiness":
+            requested_capabilities = request.context.get("authorized_capability_ids")
+            authorized = (
+                set(requested_capabilities)
+                if isinstance(requested_capabilities, (list, tuple, set))
+                else set(RELEASE_READINESS_CAPABILITIES)
+            )
+            steps = []
+            if "repository_state" in authorized:
+                steps.append(
+                    {
+                        "step_id": "step-1",
+                        "capability_id": "repository_state",
+                        "parameters": {},
+                    }
+                )
+            if "project_metadata" in authorized:
+                steps.append(
+                    {
+                        "step_id": "step-2",
+                        "capability_id": "project_metadata",
+                        "parameters": {"relative_path": "PROJECT_CONTEXT.md"},
+                    }
+                )
+            if "test_verification" in authorized:
+                steps.append(
+                    {
+                        "step_id": "step-3",
+                        "capability_id": "test_verification",
+                        "parameters": {"profile": "unit"},
+                    }
+                )
+            return LLMResponse(
+                payload={
+                    "schema_version": 2,
+                    "summary": "Collect repository, project metadata, and test evidence.",
+                    "steps": steps,
+                },
+                provider=self.provider_name,
+                model=self.model_name,
+                duration_ms=0,
+                attempt_count=1,
+            )
         return LLMResponse(
             payload={
                 "schema_version": 2,

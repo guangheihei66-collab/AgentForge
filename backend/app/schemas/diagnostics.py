@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 HealthState = Literal["HEALTHY", "DEGRADED", "UNHEALTHY", "UNKNOWN"]
 AnalystStatus = Literal["NOT_REQUESTED", "PENDING", "GENERATING", "SUCCEEDED", "FAILED"]
+AnalystSynthesisMode = Literal["REAL", "MOCK", "FAILED", "NOT_REQUESTED"]
 
 
 class RuntimeIdentityRead(BaseModel):
@@ -58,6 +59,7 @@ class CommandProvenanceRead(BaseModel):
 
 class AnalystDiagnosticsRead(BaseModel):
     status: AnalystStatus
+    synthesis_mode: AnalystSynthesisMode = "NOT_REQUESTED"
     task_id: str | None = None
     plan_id: str | None = None
     plan_version: int | None = None
@@ -75,5 +77,10 @@ class DiagnosticsRead(BaseModel):
     provider: dict[str, object]
     recent_task: RecentTaskRead | None
     analyst: AnalystDiagnosticsRead
+    planner_provider: str | None = None
+    planner_model: str | None = None
+    analyst_provider: str | None = None
+    analyst_model: str | None = None
+    analyst_synthesis_mode: AnalystSynthesisMode = "NOT_REQUESTED"
     command_provenance: CommandProvenanceRead | None = None
     recent_errors: list[str]

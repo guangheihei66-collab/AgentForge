@@ -58,7 +58,14 @@ class AgentRuntime:
         self.replanning_service = replanning_service
         self.analyst_service = analyst_service
 
-    def run(self, *, task_id: str, plan_id: str, plan_version: int) -> RuntimeResult:
+    def run(
+        self,
+        *,
+        task_id: str,
+        plan_id: str,
+        plan_version: int,
+        language: str = "en-US",
+    ) -> RuntimeResult:
         task = self.session.get(TaskRecord, task_id)
         plan = self.session.get(PlanRecord, plan_id)
         if task is None:
@@ -231,7 +238,10 @@ class AgentRuntime:
                         runtime_snapshot, task_id, RuntimeState.FAILED, summary
                     )
                     self._synthesize_after_terminal(
-                        task_id=task_id, plan_id=plan_id, plan_version=plan_version
+                        task_id=task_id,
+                        plan_id=plan_id,
+                        plan_version=plan_version,
+                        language=language,
                     )
                     return RuntimeResult(
                         task_id,
@@ -294,7 +304,10 @@ class AgentRuntime:
                     observation.decision_summary,
                 )
                 self._synthesize_after_terminal(
-                    task_id=task_id, plan_id=plan_id, plan_version=plan_version
+                    task_id=task_id,
+                    plan_id=plan_id,
+                    plan_version=plan_version,
+                    language=language,
                 )
                 return RuntimeResult(
                     task_id=task_id,
@@ -319,7 +332,10 @@ class AgentRuntime:
                 observation.decision_summary,
             )
             self._synthesize_after_terminal(
-                task_id=task_id, plan_id=plan_id, plan_version=plan_version
+                task_id=task_id,
+                plan_id=plan_id,
+                plan_version=plan_version,
+                language=language,
             )
             return RuntimeResult(
                 task_id=task_id,
@@ -335,16 +351,26 @@ class AgentRuntime:
         raise ValueError("Runtime cannot complete an empty plan")
 
     def _synthesize_after_terminal(
-        self, *, task_id: str, plan_id: str, plan_version: int
+        self,
+        *,
+        task_id: str,
+        plan_id: str,
+        plan_version: int,
+        language: str = "en-US",
     ) -> None:
         """Best-effort downstream synthesis after terminal facts are committed."""
 
         if self.analyst_service is None:
             return
         try:
-            self.analyst_service.synthesize(
-                task_id=task_id, plan_id=plan_id, plan_version=plan_version
-            )
+            synthesis_kwargs = {
+                "task_id": task_id,
+                "plan_id": plan_id,
+                "plan_version": plan_version,
+            }
+            if language != "en-US":
+                synthesis_kwargs["language"] = language
+            self.analyst_service.synthesize(**synthesis_kwargs)
         except Exception:
             # Analyst failure must never change a committed governed outcome.
             try:

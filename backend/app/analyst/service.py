@@ -18,9 +18,17 @@ from ..agents.providers.base import (
     ProviderErrorCategory,
 )
 from ..storage.orm import AuditEventRecord, TaskRecord
-from .models import AnalystDraft, AnalystReport, AnalystSynthesisStatus
+from .coverage import assess_evidence_coverage
+from .models import (
+    AnalystDraft,
+    AnalystReport,
+    AnalystSynthesisStatus,
+    EvidenceSufficiency,
+    OverallStatus,
+    ReleaseRecommendation,
+)
 from .package import EvidencePackageError, build_evidence_package
-from .prompts import ANALYST_SYSTEM_INSTRUCTION, build_analyst_prompt
+from .prompts import analyst_system_instruction, build_analyst_prompt, normalize_analyst_language
 from .read_model import AnalystReadModel, read_analyst_report
 from .storage import AnalystArtifactError, AnalystArtifactStore
 from .validator import AnalystValidationError, validate_draft
@@ -71,6 +79,7 @@ class AnalystService:
         task_id: str,
         plan_id: str,
         plan_version: int,
+        language: str = "en-US",
     ) -> AnalystSynthesisResult:
         task = self.session.get(TaskRecord, task_id)
         if task is None:
@@ -82,6 +91,7 @@ class AnalystService:
                 task_id, plan_id, plan_version, "TASK_NOT_TERMINAL", emit_event=False
             )
 
+        language = normalize_analyst_language(language)
         correlation_id = str(uuid4())
         provider_name, model_name = self._provider_metadata()
         self._audit(
@@ -130,10 +140,13 @@ class AnalystService:
                 )
             response = generate(
                 LLMRequest(
-                    prompt=build_analyst_prompt(package),
-                    context={"evidence_package": package.to_dict()},
+                    prompt=build_analyst_prompt(package, language=language),
+                    context={
+                        "evidence_package": package.to_dict(),
+                        "language": language,
+                    },
                     output_schema=AnalystDraft.model_json_schema(),
-                    system_instruction=ANALYST_SYSTEM_INSTRUCTION,
+                    system_instruction=analyst_system_instruction(language),
                 )
             )
             draft = validate_draft(
@@ -147,6 +160,7 @@ class AnalystService:
                 provider=provider_name or response.provider,
                 model=model_name or response.model,
                 package=package,
+                language=language,
             )
             metadata = self.artifacts.write(report)
             self._audit(
@@ -162,6 +176,8 @@ class AnalystService:
                     "content_hash": metadata.content_hash,
                     "report_status": report.overall_status.value,
                     "release_recommendation": report.release_recommendation.value,
+                    "evidence_sufficiency": report.evidence_coverage.sufficiency.value,
+                    "language": report.language,
                     "finding_count": len(report.findings),
                     "evidence_ref_count": report.evidence_coverage.referenced_count,
                 },
@@ -239,6 +255,7 @@ class AnalystService:
         provider: str,
         model: str,
         package,
+        language: str,
     ) -> AnalystReport:
         references = {
             reference
@@ -250,12 +267,40 @@ class AnalystService:
             for action in draft.next_actions
             for reference in action.evidence_refs
         )
-        notes = list(dict.fromkeys([*package.limitations, *draft.evidence_coverage.notes]))[:8]
+        assessment = assess_evidence_coverage(package)
+        notes = list(
+            dict.fromkeys(
+                [*assessment.notes, *package.limitations, *draft.evidence_coverage.notes]
+            )
+        )[:8]
+        recommendation = draft.release_recommendation
+        overall_status = draft.overall_status
+        if assessment.has_relevant_failure:
+            recommendation = ReleaseRecommendation.NOT_READY
+            overall_status = OverallStatus.BLOCKED
+        elif assessment.sufficiency is not EvidenceSufficiency.SUFFICIENT and (
+            recommendation
+            in {
+                ReleaseRecommendation.READY,
+                ReleaseRecommendation.READY_WITH_CONDITIONS,
+            }
+            or overall_status is OverallStatus.HEALTHY
+        ):
+            recommendation = ReleaseRecommendation.INSUFFICIENT_EVIDENCE
+            overall_status = (
+                OverallStatus.UNKNOWN
+                if assessment.sufficiency is EvidenceSufficiency.INSUFFICIENT
+                else OverallStatus.AT_RISK
+            )
         payload = draft.model_dump()
+        payload["overall_status"] = overall_status.value
+        payload["release_recommendation"] = recommendation.value
+        payload["limitations"] = notes
         payload["evidence_coverage"] = {
             "available_count": len(package.evidence),
             "referenced_count": len(references),
             "truncated": package.truncated,
+            "sufficiency": assessment.sufficiency.value,
             "notes": notes,
         }
         payload.update(
@@ -267,6 +312,7 @@ class AnalystService:
                 "provider": str(provider)[:128],
                 "model": str(model)[:128],
                 "generated_at": datetime.now(timezone.utc),
+                "language": language,
             }
         )
         return AnalystReport.model_validate(payload)

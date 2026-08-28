@@ -54,6 +54,7 @@ class AgentApprovalExecutionService:
         plan_id: str,
         plan_version: int,
         actor: str,
+        language: str = "en-US",
         correlation_id: str | None = None,
     ) -> RuntimeResult:
         correlation_id = command_correlation_id(correlation_id)
@@ -142,11 +143,14 @@ class AgentApprovalExecutionService:
                 plan_version=plan.version,
                 correlation_id=correlation_id,
             )
-            return runtime.run(
-                task_id=task.id,
-                plan_id=plan.id,
-                plan_version=plan.version,
-            )
+            runtime_kwargs = {
+                "task_id": task.id,
+                "plan_id": plan.id,
+                "plan_version": plan.version,
+            }
+            if language != "en-US":
+                runtime_kwargs["language"] = language
+            return runtime.run(**runtime_kwargs)
         except Exception as exc:
             execution_count_after = (
                 self.session.query(ToolExecutionRecord)

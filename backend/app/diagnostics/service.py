@@ -16,15 +16,19 @@ from .health import classify_overall
 
 def _provider() -> tuple[dict[str, object], str]:
     try:
-        config = load_provider_config()
+        config = load_provider_config(allow_default_mock=False)
         from ..api.routes.providers import connection_state
 
         snapshot = connection_state.get()
         if not config.configured:
-            return {"provider": config.provider, "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": "NOT_CONFIGURED"}, "DEGRADED"
+            return {"provider": config.provider, "model": config.model or "not-configured", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": "NOT_CONFIGURED"}, "DEGRADED"
+        if config.provider == "mock":
+            connection = {"success": "SUCCESS", "failed": "FAILED"}.get(snapshot.status, "UNKNOWN")
+            state = "HEALTHY" if snapshot.status == "success" else ("DEGRADED" if snapshot.status == "failed" else "UNKNOWN")
+            return {"provider": "mock", "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": connection}, state
         connection = {"success": "SUCCESS", "failed": "FAILED"}.get(snapshot.status, "UNKNOWN")
         state = "HEALTHY" if snapshot.status == "success" else ("DEGRADED" if snapshot.status == "failed" else "UNKNOWN")
-        return {"provider": config.provider, "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": connection}, state
+        return {"provider": config.provider, "model": config.model or "not-configured", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": connection}, state
     except Exception:
         return {"provider": "UNKNOWN", "model": "UNKNOWN", "structured_output_mode": "UNKNOWN", "credential_configured": False, "connection": "UNKNOWN"}, "UNKNOWN"
 
@@ -129,8 +133,14 @@ def _analyst_snapshot(session: Session, task_id: str) -> AnalystDiagnosticsRead:
         task_id=task_id,
         artifact_store=AnalystArtifactStore(data_root),
     )
+    synthesis_mode = "NOT_REQUESTED"
+    if read_model.status.value == "FAILED":
+        synthesis_mode = "FAILED"
+    elif read_model.status.value == "SUCCEEDED":
+        synthesis_mode = "MOCK" if read_model.provider == "mock" else "REAL"
     return AnalystDiagnosticsRead(
         status=read_model.status.value,
+        synthesis_mode=synthesis_mode,
         task_id=task_id,
         plan_id=read_model.plan_id,
         plan_version=read_model.plan_version,
@@ -140,6 +150,34 @@ def _analyst_snapshot(session: Session, task_id: str) -> AnalystDiagnosticsRead:
         content_hash=read_model.content_hash,
         generated_at=read_model.generated_at,
         failure_category=read_model.failure_category,
+    )
+
+
+def _planner_metadata(
+    session: Session, task_id: str, provider: dict[str, object]
+) -> tuple[str | None, str | None]:
+    events = (
+        session.query(AuditEventRecord)
+        .filter(
+            AuditEventRecord.task_id == task_id,
+            AuditEventRecord.event_type.in_(
+                {"LLM_PLAN_REQUESTED", "LLM_PLAN_SUCCEEDED", "LLM_PLAN_FAILED"}
+            ),
+        )
+        .order_by(AuditEventRecord.created_at.desc(), AuditEventRecord.id.desc())
+        .all()
+    )
+    if events:
+        payload = _payload(events[0])
+        event_provider = _text(payload.get("provider"))
+        event_model = _text(payload.get("model"))
+        if event_provider or event_model:
+            return event_provider, event_model
+    configured_provider = provider.get("provider")
+    configured_model = provider.get("model")
+    return (
+        configured_provider if isinstance(configured_provider, str) else None,
+        configured_model if isinstance(configured_model, str) else None,
     )
 
 
@@ -156,6 +194,8 @@ def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
     recent_task = None
     analyst = AnalystDiagnosticsRead(status="NOT_REQUESTED")
     command_provenance = None
+    planner_provider = None
+    planner_model = None
     if recent:
         plan = session.scalars(select(PlanRecord).where(PlanRecord.task_id == recent.id).order_by(PlanRecord.version.desc()).limit(1)).first()
         approval = session.scalars(select(ApprovalRecord).where(ApprovalRecord.task_id == recent.id).order_by(ApprovalRecord.created_at.desc()).limit(1)).first()
@@ -165,5 +205,6 @@ def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
         rejected = execution_counts.get("REJECTED", 0)
         recent_task = RecentTaskRead(id=recent.id, state=recent.status, plan_version=plan.version if plan else None, approval=approval.decision if approval else None, executions=ExecutionCountsRead(total=sum(execution_counts.values()), success=success, failed=failed, rejected=rejected), evidence_count=session.scalar(select(func.count()).select_from(EvidenceRecord).where(EvidenceRecord.task_id == recent.id)) or 0, observation_count=session.scalar(select(func.count()).select_from(AuditEventRecord).where(AuditEventRecord.task_id == recent.id, AuditEventRecord.event_type.ilike("%observation%"))) or 0, replan_count=session.scalar(select(func.count()).select_from(AuditEventRecord).where(AuditEventRecord.task_id == recent.id, AuditEventRecord.event_type.ilike("%replan%"))) or 0)
         analyst = _analyst_snapshot(session, recent.id)
+        planner_provider, planner_model = _planner_metadata(session, recent.id, provider)
         command_provenance = _command_provenance(session, recent)
-    return DiagnosticsRead(identity=RuntimeIdentityRead(**identity.__dict__) if hasattr(identity, "__dict__") else RuntimeIdentityRead(product=identity.product, version=identity.version, revision=identity.revision, environment=identity.environment), health=HealthRead(overall=classify_overall(backend=backend_state, database=database_state, provider=provider_state), backend=backend_state, database=database_state, provider=provider_state), provider=provider, recent_task=recent_task, analyst=analyst, command_provenance=command_provenance, recent_errors=[])
+    return DiagnosticsRead(identity=RuntimeIdentityRead(**identity.__dict__) if hasattr(identity, "__dict__") else RuntimeIdentityRead(product=identity.product, version=identity.version, revision=identity.revision, environment=identity.environment), health=HealthRead(overall=classify_overall(backend=backend_state, database=database_state, provider=provider_state), backend=backend_state, database=database_state, provider=provider_state), provider=provider, recent_task=recent_task, analyst=analyst, planner_provider=planner_provider, planner_model=planner_model, analyst_provider=analyst.provider, analyst_model=analyst.model, analyst_synthesis_mode=analyst.synthesis_mode, command_provenance=command_provenance, recent_errors=[])
