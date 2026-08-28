@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentWorkspace } from './AgentWorkspace'
 import type { ProjectSummary } from '../types'
 
@@ -7,6 +7,8 @@ const projects: ProjectSummary[] = [{ id: 'project-1', name: 'AgentForge', descr
 const task = { id: 'task-1', project_id: 'project-1', title: 'Repository Analyst Agent', goal: 'RAW GOAL', workspace: 'D:/AgentForge', status: 'WAITING_APPROVAL' as const, created_at: '', updated_at: '' }
 
 describe('Repository Analyst Agent workspace', () => {
+  afterEach(() => cleanup())
+
   it('requires an explicit Project and preserves the raw Goal on start', async () => {
     const onStart = vi.fn().mockResolvedValue(undefined)
     render(<AgentWorkspace projects={projects} planning={false} error={null} onStart={onStart} />)
@@ -37,4 +39,5 @@ describe('Repository Analyst Agent workspace', () => {
     expect(screen.getAllByText('AgentForge').length).toBeGreaterThan(0)
     expect(screen.getByText('Approval required')).toBeInTheDocument()
   })
+
 })

@@ -70,11 +70,28 @@ export type ProviderStatus = {
   failure_category?: string | null
 }
 export type HealthState = 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'UNKNOWN'
+export type ExecutionInitiationState = 'NOT_REQUESTED' | 'REQUESTED' | 'STARTED' | 'FAILED'
+export type CommandProvenance = {
+  command_kind: string
+  task_id: string
+  task_state: string
+  plan_id: string | null
+  plan_version: number | null
+  approval_id: string | null
+  approval_state: string | null
+  authority_validation: string | null
+  approval_persistence: string | null
+  execution_initiation: ExecutionInitiationState
+  last_checkpoint: string
+  correlation_id: string
+  failure_category: string | null
+}
 export type Diagnostics = {
   identity: { product: string; version: string; revision: string | null; environment: string }
   health: { overall: HealthState; backend: HealthState; database: HealthState; provider: HealthState }
   provider: { provider: string; model: string; structured_output_mode: string; credential_configured: boolean; connection: string }
   recent_task: { id: string; state: string; plan_version: number | null; approval: string | null; executions: { total: number; success: number; failed: number; rejected: number }; evidence_count: number; observation_count: number; replan_count: number } | null
+  command_provenance: CommandProvenance | null
   recent_errors: string[]
 }
 

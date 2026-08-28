@@ -38,7 +38,7 @@ describe('Agent approval-to-execution wiring', () => {
     fireEvent.click((await screen.findAllByText(task.title))[0])
     fireEvent.click(screen.getByRole('button', { name: 'Agent' }))
     await waitFor(() => expect(api.getTaskDetail).toHaveBeenCalledWith(task.id))
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve & Execute' }))
     await waitFor(() => expect(api.approveAndExecuteTask).toHaveBeenCalledTimes(1))
     expect(api.approve).not.toHaveBeenCalled()
     expect(api.executeTask).not.toHaveBeenCalled()

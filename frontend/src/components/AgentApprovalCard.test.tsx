@@ -18,7 +18,7 @@ describe('Agent approval card', () => {
     const onApprove = vi.fn().mockResolvedValue(undefined)
     const onReject = vi.fn().mockResolvedValue(undefined)
     render(<AgentApprovalCard item={item} onApprove={onApprove} onReject={onReject} />)
-    screen.getByRole('button', { name: 'Approve' }).click()
+    screen.getByRole('button', { name: 'Approve & Execute' }).click()
     expect(onApprove).toHaveBeenCalledWith(item)
   })
 })
