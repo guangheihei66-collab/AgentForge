@@ -13,6 +13,7 @@ from ...audit.provenance import (
     EXECUTION_INITIATION_FAILED,
     EXECUTION_INITIATION_REQUESTED,
     EXECUTION_INITIATION_STARTED,
+    RUNTIME_EXECUTION_FAILED,
     command_correlation_id,
     persist_provenance_event,
     safe_error_category,
@@ -32,6 +33,8 @@ _COMPOSITE_PROVENANCE_EVENTS = {
     EXECUTION_INITIATION_REQUESTED,
     EXECUTION_INITIATION_STARTED,
     EXECUTION_INITIATION_FAILED,
+    RUNTIME_EXECUTION_FAILED,
+    "REPLAN_FAILED",
 }
 
 
@@ -237,6 +240,42 @@ class AgentApprovalExecutionService:
         correlation_id: str,
         error: Exception,
     ) -> None:
+        if execution_count_after > execution_count_before:
+            current = self.session.get(TaskRecord, task.id)
+            if current is not None and current.status == TaskStatus.RUNNING.value:
+                TaskService(self.session).transition_task(
+                    task.id,
+                    TaskStatus.FAILED,
+                    actor="agent_orchestration",
+                    reason="Runtime execution failed after initiation",
+                )
+            error_category = (
+                "RUNTIME_VALIDATION_FAILED"
+                if isinstance(error, (TypeError, ValueError))
+                else safe_error_category(error)
+            )
+            persist_provenance_event(
+                self.session,
+                task_id=task.id,
+                event_type=RUNTIME_EXECUTION_FAILED,
+                actor="agent_orchestration",
+                correlation_id=correlation_id,
+                fields={
+                    "approval_id": approval_id,
+                    "command_kind": "AGENT_APPROVE_AND_EXECUTE",
+                    "error_category": error_category,
+                    "execution_count_before": execution_count_before,
+                    "execution_count_after": execution_count_after,
+                    "execution_initiation": "STARTED",
+                    "outcome": "FAILED",
+                    "plan_id": plan_id,
+                    "plan_version": plan_version,
+                    "summary": "Runtime execution failed after initiation",
+                    "task_id": task.id,
+                    "task_state": self.session.get(TaskRecord, task.id).status,
+                },
+            )
+            return
         if (
             task.status == TaskStatus.RUNNING.value
             and execution_count_after == execution_count_before == 0

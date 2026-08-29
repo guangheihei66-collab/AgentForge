@@ -42,6 +42,7 @@ _INITIATION_EVENTS = {
     "EXECUTION_INITIATION_STARTED",
     "EXECUTION_INITIATION_FAILED",
 }
+_RUNTIME_FAILURE_EVENTS = {"RUNTIME_EXECUTION_FAILED", "REPLAN_FAILED"}
 
 
 def _payload(event: AuditEventRecord) -> dict[str, object]:
@@ -99,7 +100,11 @@ def _command_provenance(
                 initiation = "STARTED"
             elif initiation == "NOT_REQUESTED":
                 initiation = "REQUESTED"
-        if event.event_type in {"APPROVAL_COMMAND_FAILED", "EXECUTION_INITIATION_FAILED"}:
+        if event.event_type in {
+            "APPROVAL_COMMAND_FAILED",
+            "EXECUTION_INITIATION_FAILED",
+            *_RUNTIME_FAILURE_EVENTS,
+        }:
             failure_category = _text(payload.get("error_category"))
 
     last = window[-1]
