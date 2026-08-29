@@ -1,5 +1,7 @@
 import json
+import os
 import sys
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -130,6 +132,55 @@ def test_test_profile_execution(db_session):
 
     assert result.status == "SUCCESS"
     assert "smoke" in result.summary
+
+
+def test_unit_profile_uses_isolated_provider_source_and_database_environment(
+    monkeypatch, tmp_path
+):
+    from app.tools.test_tool import TestTool
+
+    workspace = tmp_path / "workspace"
+    (workspace / "backend").mkdir(parents=True)
+    captured: dict[str, object] = {}
+
+    for name, value in {
+        "AGENTFORGE_LLM_PROVIDER": "openai-compatible",
+        "AGENTFORGE_LLM_BASE_URL": "https://provider.example.test/v1",
+        "AGENTFORGE_LLM_MODEL": "real-model",
+        "AGENTFORGE_LLM_API_KEY": "test-secret-must-not-propagate",
+        "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE": "json_object",
+        "AGENTFORGE_DATABASE_URL": "sqlite:///production.sqlite3",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    def fake_run(command, **kwargs):
+        captured.update(command=command, **kwargs)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="2 passed\n", stderr=""
+        )
+
+    monkeypatch.setattr("app.tools.test_tool.subprocess.run", fake_run)
+
+    result = TestTool().execute(
+        "run_profile", {"profile": "unit"}, str(workspace)
+    )
+
+    environment = captured["env"]
+    assert result["success"] is True
+    assert captured["cwd"] == str(workspace)
+    assert isinstance(environment, dict)
+    assert environment["AGENTFORGE_LLM_PROVIDER"] == "mock"
+    assert environment["AGENTFORGE_DATABASE_URL"] == "sqlite+pysqlite:///:memory:"
+    assert environment["PYTHONPATH"].split(os.pathsep)[0] == str(
+        (workspace / "backend").resolve()
+    )
+    for name in (
+        "AGENTFORGE_LLM_BASE_URL",
+        "AGENTFORGE_LLM_MODEL",
+        "AGENTFORGE_LLM_API_KEY",
+        "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE",
+    ):
+        assert name not in environment
 
 
 def test_failed_test_profile_is_persisted_as_failed_with_evidence(db_session, monkeypatch):
