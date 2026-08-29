@@ -114,6 +114,16 @@ def load_provider_config(
     except ValueError:
         structured_output_mode = StructuredOutputMode.JSON_SCHEMA
         mode_error = "Structured output mode is invalid"
+    if (
+        provider == "openai-compatible"
+        and structured_output_mode is StructuredOutputMode.JSON_SCHEMA
+    ):
+        # The OpenAI-compatible Chat Completions contract used by AgentForge
+        # supports JSON Output, while the legacy provider-side json_schema
+        # envelope is rejected by DeepSeek.  Keep local Pydantic validation as
+        # the schema authority and normalize the transport mode here so status,
+        # Planner, Replanner, Analyst, and connection checks agree.
+        structured_output_mode = StructuredOutputMode.JSON_OBJECT
     if provider == "mock":
         error = timeout_error or token_error or mode_error
         return ProviderConfig(

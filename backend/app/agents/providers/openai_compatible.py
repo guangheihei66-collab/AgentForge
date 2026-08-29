@@ -6,6 +6,7 @@ from email.utils import parsedate_to_datetime
 import json
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -105,17 +106,9 @@ class OpenAICompatibleProvider:
         system_instruction: str = "",
         structured_output_mode: StructuredOutputMode | None = None,
     ) -> LLMResponse:
-        response_format: dict[str, Any] = {"type": "json_object"}
-        output_mode = structured_output_mode or self.config.structured_output_mode
-        if output_mode.value == StructuredOutputMode.JSON_SCHEMA.value:
-            response_format = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": schema_name,
-                    "strict": True,
-                    "schema": dict(output_schema),
-                },
-            }
+        del schema_name, output_schema, structured_output_mode
+        output_mode = StructuredOutputMode.JSON_OBJECT
+        response_format: dict[str, Any] = {"type": output_mode.value}
         request_payload = {
             "model": self.config.model,
             "messages": [
@@ -129,6 +122,12 @@ class OpenAICompatibleProvider:
             "response_format": response_format,
             "thinking": {"type": "disabled"},
         }
+        request_facts = self._request_facts(
+            request_payload,
+            endpoint_path=urlsplit(f"{self.config.base_url}/chat/completions").path,
+            prompt=prompt,
+            output_mode=output_mode,
+        )
         started = time.perf_counter()
         for attempt in range(1, 4):
             try:
@@ -142,7 +141,7 @@ class OpenAICompatibleProvider:
                     attempt_count=attempt,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
-                    diagnostics=diagnostics,
+                    diagnostics={"request_facts": request_facts, **diagnostics},
                 )
             except ProviderError as exc:
                 error = exc
@@ -175,7 +174,7 @@ class OpenAICompatibleProvider:
                     safe_message=error.safe_message,
                     attempt_count=attempt,
                     duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
-                    diagnostics=error.diagnostics,
+                    diagnostics={"request_facts": request_facts, **error.diagnostics},
                 ) from None
             delay = retry_after if retry_after is not None else RETRY_DELAYS[attempt - 1]
             self.sleeper(delay)
@@ -224,6 +223,7 @@ class OpenAICompatibleProvider:
         diagnostics = {
             "upstream_http_status": status,
             "failure_stage": "upstream_http",
+            **OpenAICompatibleProvider._safe_upstream_error_facts(status, body),
         }
         if status in {401, 403}:
             return ProviderError(
@@ -285,26 +285,8 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _classify_error_body(status: int, body: bytes) -> ProviderErrorCategory:
-        del status
         default = ProviderErrorCategory.INVALID_CONFIGURATION
-        try:
-            envelope = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return default
-        if not isinstance(envelope, dict):
-            return default
-        error = envelope.get("error")
-        values: list[str] = []
-        if isinstance(error, dict):
-            values.extend(value for value in error.values() if isinstance(value, str))
-        elif isinstance(error, str):
-            values.append(error)
-        values.extend(
-            value
-            for key, value in envelope.items()
-            if key in {"code", "type", "message"} and isinstance(value, str)
-        )
-        text = " ".join(values).casefold().replace("_", " ").replace("-", " ")
+        text = OpenAICompatibleProvider._error_text(body)
         model_markers = ("model", "engine")
         unavailable_markers = (
             "not found",
@@ -318,6 +300,125 @@ class OpenAICompatibleProvider:
         ):
             return ProviderErrorCategory.MODEL_UNAVAILABLE
         return default
+
+    @staticmethod
+    def _error_text(body: bytes) -> str:
+        """Return a transient classifier string; never place it in diagnostics."""
+
+        try:
+            envelope = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return ""
+        if not isinstance(envelope, dict):
+            return ""
+        error = envelope.get("error")
+        values: list[str] = []
+        if isinstance(error, dict):
+            values.extend(value for value in error.values() if isinstance(value, str))
+        elif isinstance(error, str):
+            values.append(error)
+        values.extend(
+            value
+            for key, value in envelope.items()
+            if key in {"code", "type", "message"} and isinstance(value, str)
+        )
+        return " ".join(values).casefold().replace("_", " ").replace("-", " ")
+
+    @staticmethod
+    def _safe_upstream_error_facts(status: int, body: bytes) -> dict[str, str]:
+        """Map untrusted upstream text to fixed, non-sensitive diagnostics."""
+
+        text = OpenAICompatibleProvider._error_text(body)
+        if status in {401, 403}:
+            return {
+                "upstream_error_category": "authentication",
+                "upstream_error_message": "Provider rejected authentication credentials",
+            }
+        if status == 402:
+            return {
+                "upstream_error_category": "insufficient_balance",
+                "upstream_error_message": "Provider reported insufficient balance",
+            }
+        if status == 429:
+            return {
+                "upstream_error_category": "rate_limit",
+                "upstream_error_message": "Provider rate-limited the request",
+            }
+        if status == 404 and "model" in text:
+            return {
+                "upstream_error_category": "model_unavailable",
+                "upstream_error_message": "Provider rejected the configured model",
+            }
+        if status in {400, 422}:
+            if "response format" in text or "json schema" in text:
+                return {
+                    "upstream_error_category": "unsupported_response_format",
+                    "upstream_error_message": "Provider rejected the response_format parameter",
+                }
+            if "thinking" in text or "reasoning" in text:
+                return {
+                    "upstream_error_category": "unsupported_thinking_mode",
+                    "upstream_error_message": "Provider rejected the thinking configuration",
+                }
+            if "max tokens" in text or "max completion tokens" in text:
+                return {
+                    "upstream_error_category": "invalid_token_parameter",
+                    "upstream_error_message": "Provider rejected the token limit parameter",
+                }
+            return {
+                "upstream_error_category": "invalid_request",
+                "upstream_error_message": "Provider rejected request parameters",
+            }
+        return {}
+
+    @staticmethod
+    def _request_facts(
+        payload: Mapping[str, Any],
+        *,
+        endpoint_path: str,
+        prompt: str,
+        output_mode: StructuredOutputMode,
+    ) -> dict[str, Any]:
+        messages = payload.get("messages", [])
+        message_roles = [
+            item.get("role")
+            for item in messages
+            if isinstance(item, Mapping) and isinstance(item.get("role"), str)
+        ]
+        message_text = " ".join(
+            item.get("content", "")
+            for item in messages
+            if isinstance(item, Mapping) and isinstance(item.get("content"), str)
+        )
+        response_format = payload.get("response_format")
+        response_format_type = (
+            response_format.get("type")
+            if isinstance(response_format, Mapping)
+            else None
+        )
+        return {
+            "http_method": "POST",
+            "endpoint_path": endpoint_path or "/chat/completions",
+            "model": payload.get("model"),
+            "structured_output_mode": output_mode.value,
+            "response_format_type": response_format_type,
+            "thinking": (
+                payload["thinking"].get("type")
+                if isinstance(payload.get("thinking"), Mapping)
+                else None
+            ),
+            "max_tokens": payload.get("max_tokens"),
+            "temperature_present": "temperature" in payload,
+            "tool_fields_present": any(
+                field in payload for field in ("tools", "tool_choice")
+            ),
+            "top_level_fields": sorted(
+                field for field in payload if not field.startswith("_")
+            ),
+            "message_roles": message_roles,
+            "json_instruction_present": "json"
+            in f"{prompt} {message_text}".casefold(),
+        }
 
     @staticmethod
     def _retry_after(value: str | None) -> float | None:

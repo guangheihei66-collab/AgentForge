@@ -2,6 +2,8 @@ import json
 
 import httpx
 
+from app.analyst.package import EvidencePackage
+from app.analyst.prompts import build_analyst_prompt
 from app.agents.providers import LLMRequest, MockLLMProvider
 from app.agents.providers.openai_compatible import OpenAICompatibleProvider
 from app.agents.providers.config import load_provider_config
@@ -42,6 +44,37 @@ def test_mock_analyst_provider_is_deterministic_and_evidence_grounded():
     assert first.payload["findings"][0]["evidence_refs"] == ["evidence-1"]
     assert "reasoning" not in json.dumps(dict(first.payload)).lower()
     assert first.provider == "mock"
+
+
+def test_analyst_prompt_declares_json_object_report_contract():
+    package = EvidencePackage(
+        task={},
+        project={},
+        plan={},
+        executions=(),
+        observations=(),
+        evidence=(),
+        lifecycle={},
+        limitations=(),
+        truncated=False,
+    )
+
+    prompt = build_analyst_prompt(package)
+
+    assert "Return valid JSON only" in prompt
+    for field in (
+        "summary",
+        "overall_status",
+        "release_recommendation",
+        "findings",
+        "next_actions",
+        "limitations",
+        "evidence_coverage",
+    ):
+        assert field in prompt
+    assert "checked_dimensions" in prompt
+    assert "Do not use legacy report fields" in prompt
+    assert "notes (array of strings)" in prompt
 
 
 def test_openai_analyst_provider_uses_dedicated_boundary_and_schema():
@@ -92,5 +125,6 @@ def test_openai_analyst_provider_uses_dedicated_boundary_and_schema():
 
     assert response.payload["overall_status"] == "HEALTHY"
     assert captured["body"]["messages"][0]["content"] == "Analyst-only boundary."
-    assert captured["body"]["response_format"]["json_schema"]["name"] == "agentforge_analyst_report"
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in json.dumps(captured["body"])
     assert captured["body"]["thinking"] == {"type": "disabled"}

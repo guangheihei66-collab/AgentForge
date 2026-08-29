@@ -90,11 +90,14 @@ def test_product_planner_dependency_fails_closed_without_provider(monkeypatch):
     assert "NOT_CONFIGURED" in str(exc.value.detail)
 
 
-@pytest.mark.parametrize("mode", ["json_schema", "json_object"])
-def test_structured_output_mode_is_explicit_and_closed(mode):
+@pytest.mark.parametrize(
+    ("mode", "effective_mode"),
+    [("json_schema", "json_object"), ("json_object", "json_object")],
+)
+def test_structured_output_mode_is_explicit_and_closed(mode, effective_mode):
     config = load_provider_config({**real_env(), "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE": mode})
 
-    assert config.structured_output_mode.value == mode
+    assert config.structured_output_mode.value == effective_mode
 
 
 def test_unknown_structured_output_mode_fails_closed_without_secret():
@@ -332,9 +335,84 @@ def test_real_provider_sends_bounded_authenticated_structured_request():
     assert request.headers["authorization"] == f"Bearer {SECRET}"
     assert body["model"] == "example-model"
     assert body["max_tokens"] == 1200
-    assert body["response_format"]["type"] == "json_schema"
+    assert body["response_format"] == {"type": "json_object"}
     assert body["thinking"] == {"type": "disabled"}
     assert "temperature" not in body
+
+
+def test_deepseek_planner_uses_json_object_for_legacy_effective_mode():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return chat_response(valid_plan())
+
+    config = replace(
+        real_config(),
+        model="deepseek-v4-flash",
+        structured_output_mode=StructuredOutputMode.JSON_SCHEMA,
+    )
+    provider = OpenAICompatibleProvider(
+        config, transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+
+    response = provider.generate_plan(plan_request())
+
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in json.dumps(captured["body"])
+    assert response.diagnostics["request_facts"] == {
+        "http_method": "POST",
+        "endpoint_path": "/v1/chat/completions",
+        "model": "deepseek-v4-flash",
+        "structured_output_mode": "json_object",
+        "response_format_type": "json_object",
+        "thinking": "disabled",
+        "max_tokens": 1200,
+        "temperature_present": False,
+        "tool_fields_present": False,
+        "top_level_fields": [
+            "max_tokens",
+            "messages",
+            "model",
+            "response_format",
+            "thinking",
+        ],
+        "message_roles": ["system", "user"],
+        "json_instruction_present": True,
+    }
+
+
+def test_real_provider_uses_one_effective_mode_for_plan_replan_analyst_and_connection():
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        return chat_response({"status": "ok"})
+
+    config = replace(
+        real_config(),
+        model="deepseek-v4-flash",
+        structured_output_mode=StructuredOutputMode.JSON_SCHEMA,
+    )
+    provider = OpenAICompatibleProvider(
+        config, transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+    request = plan_request()
+
+    provider.generate_plan(request)
+    provider.generate_replan(request)
+    provider.generate_analyst(request)
+    provider.test_connection()
+
+    assert len(captured) == 4
+    assert [body["response_format"] for body in captured] == [
+        {"type": "json_object"},
+        {"type": "json_object"},
+        {"type": "json_object"},
+        {"type": "json_object"},
+    ]
+    assert all("json_schema" not in json.dumps(body) for body in captured)
 
 
 def test_real_provider_sends_json_object_request_without_schema_fields():
@@ -385,6 +463,42 @@ def test_status_mapping_and_retry_bounds(status, category, attempts):
     assert exc.value.category == category
     assert exc.value.attempt_count == attempts
     assert SECRET not in str(exc.value)
+
+
+def test_http_400_preserves_only_safe_upstream_error_facts():
+    provider = OpenAICompatibleProvider(
+        replace(
+            real_config(),
+            model="deepseek-v4-flash",
+            structured_output_mode=StructuredOutputMode.JSON_SCHEMA,
+        ),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": (
+                            "Invalid response_format json_schema; "
+                            f"private={SECRET}"
+                        ),
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        ),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.generate_plan(plan_request())
+
+    diagnostics = exc.value.diagnostics
+    assert diagnostics["upstream_error_category"] == "unsupported_response_format"
+    assert diagnostics["upstream_error_message"] == (
+        "Provider rejected the response_format parameter"
+    )
+    assert diagnostics["request_facts"]["response_format_type"] == "json_object"
+    assert SECRET not in repr(diagnostics)
 
 
 @pytest.mark.parametrize(
@@ -1145,7 +1259,7 @@ def test_provider_status_exposes_no_credential_material(monkeypatch):
         "configured": True,
         "model": "example-model",
         "credential_configured": True,
-        "structured_output_mode": "json_schema",
+        "structured_output_mode": "json_object",
         "connection_status": "not tested",
         "failure_category": None,
     }

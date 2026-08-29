@@ -19,6 +19,28 @@ _ANALYST_SYSTEM_BOUNDARY = (
     "actions by severity and release impact."
 )
 
+_ANALYST_OUTPUT_CONTRACT = (
+    "Return valid JSON only. Use exactly these top-level fields and no others: "
+    "summary (string), overall_status (HEALTHY, AT_RISK, BLOCKED, or UNKNOWN), "
+    "release_recommendation (READY, READY_WITH_CONDITIONS, NOT_READY, or "
+    "INSUFFICIENT_EVIDENCE), findings (array), next_actions (array), "
+    "limitations (array of strings), and evidence_coverage (object). "
+    "Each finding must contain exactly id, title, severity, category, statement, "
+    "rationale, evidence_refs, and recommended_action. Finding severity is one "
+    "of BLOCKER, HIGH, MEDIUM, LOW, or INFO; finding category is one of release, "
+    "security, quality, operational, or evidence. Each next action must contain "
+    "exactly priority, action, rationale, and evidence_refs. The evidence_coverage "
+    "object must contain exactly available_count, referenced_count, truncated, "
+    "sufficiency, and notes; sufficiency is SUFFICIENT, PARTIAL, or INSUFFICIENT. "
+    "The evidence_coverage notes (array of strings) field must be an array of "
+    "strings. Use an empty "
+    "findings or next_actions array when there is no corresponding "
+    "evidence-backed item. Every finding and next action must cite one or more "
+    "exact evidence ids from the supplied package. Do not use legacy report fields "
+    "such as checked_dimensions, blockers, actions, risks, confidence, score, "
+    "project_id, or release_readiness."
+)
+
 
 def normalize_analyst_language(language: str | None) -> str:
     return language if language in SUPPORTED_ANALYST_LANGUAGES else "en-US"
@@ -42,6 +64,7 @@ def build_analyst_prompt(
 
     selected = normalize_analyst_language(language)
     return (
+        f"{_ANALYST_OUTPUT_CONTRACT}\n\n"
         "Assess the current project and release readiness using only the bounded "
         "evidence package below. Produce the requested report fields with concise "
         f"user-facing rationale and prioritized actions in {selected}.\n\n"
