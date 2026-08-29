@@ -2,6 +2,8 @@
 
 ## Enterprise AI Agent Governance Platform
 
+Current release: `v0.2.0`
+
 AgentForge is a self-hosted control plane for deploying controlled AI Agents in enterprise engineering workflows. It is an operations console, not a chatbot: operators can inspect intent, approve risk, observe execution, and trace results back to evidence and audit records.
 
 ## Overview
@@ -197,7 +199,7 @@ Phase 13 controlled re-planning is implemented behind the existing governed plan
 
 Phase 14 local Projects are implemented in the backend and React console. New API Tasks require `project_id`; clients cannot inject workspace or Tool authority. Legacy null-Project history remains readable but non-executable. The schema migration is idempotent and tested only against isolated SQLite files. The live runtime database has not been migrated by this implementation task; that operation requires a separate approved backup and migration.
 
-The current release candidate integrates the native frontend localization surface into the latest Agent Workspace UI. The console keeps the approval-routing safety rule: Agent-managed approvals must be completed from Agent Workspace through the composite approval command, while generic approval remains approval-only. The release candidate also keeps the bounded terminal recovery CTA and hides it after durable execution initiation or terminal completion.
+The v0.2.0 release integrates the native frontend localization surface into the latest Agent Workspace UI. The console keeps the approval-routing safety rule: Agent-managed approvals must be completed from Agent Workspace through the composite approval command, while generic approval remains approval-only. The release also keeps the bounded terminal recovery CTA and hides it after durable execution initiation or terminal completion. See [v0.2.0 release notes](docs/release/V0.2.0_RELEASE_NOTES.md) for the release summary and limitations.
 
 Runtime data belongs under `D:\AgentProjectData\AgentForge\`, never in this source tree.
 
