@@ -90,7 +90,7 @@ export type CommandProvenance = {
 export type Diagnostics = {
   identity: { product: string; version: string; revision: string | null; environment: string }
   health: { overall: HealthState; backend: HealthState; database: HealthState; provider: HealthState }
-  provider: { provider: string; model: string; structured_output_mode: string; credential_configured: boolean; connection: string }
+  provider: { provider: string; model: string; structured_output_mode: string; credential_configured: boolean; configuration?: 'CONFIGURED' | 'NOT_CONFIGURED' | 'UNKNOWN'; connection: string }
   recent_task: { id: string; state: string; plan_version: number | null; approval: string | null; executions: { total: number; success: number; failed: number; rejected: number }; evidence_count: number; observation_count: number; replan_count: number } | null
   planner_provider?: string | null
   planner_model?: string | null
@@ -119,7 +119,7 @@ export type AnalystOutputLanguage = 'en-US' | 'zh-CN'
 export type AgentApprovalCommand = { approval_id: string; plan_id: string; plan_version: number; actor: string; language?: AnalystOutputLanguage }
 export type RuntimeResult = { task_id: string; plan_id: string; plan_version: number; state: string; decision: string; completed_steps: number; observations: unknown[]; successor_plan_id?: string | null; successor_plan_version?: number | null; approval_id?: string | null }
 export type AnalystSynthesisStatus = 'NOT_REQUESTED' | 'PENDING' | 'GENERATING' | 'SUCCEEDED' | 'FAILED'
-export type AnalystSynthesisMode = 'REAL' | 'MOCK' | 'FAILED' | 'NOT_REQUESTED'
+export type AnalystSynthesisMode = 'REAL' | 'MOCK' | 'FAILED' | 'NOT_REQUESTED' | 'NOT_CONFIGURED'
 export type AnalystEvidenceSufficiency = 'SUFFICIENT' | 'PARTIAL' | 'INSUFFICIENT'
 export type AnalystSeverity = 'BLOCKER' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
 export type AnalystOverallStatus = 'HEALTHY' | 'AT_RISK' | 'BLOCKED' | 'UNKNOWN'

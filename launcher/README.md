@@ -31,12 +31,26 @@ Normal startup is infrastructure-only and has no business data side effects. It 
 Approvals, ToolExecutions, Evidence, or other business records. Demo fixtures
 must be created explicitly through the documented demo flow.
 
-The launcher reads the optional ignored file `launcher/.env.local` for safe
-non-secret provider settings. Process environment variables take precedence;
-credentials stay outside source control. Product mode does not silently fall
-back to Mock: configure `AGENTFORGE_LLM_PROVIDER` explicitly, or the backend
-reports the provider as not configured. `mock` is an intentional offline
-development/test mode and is labeled `MOCK` by diagnostics.
+The compact launcher includes **AI Provider Settings / AI 设置**. Configure
+the supported real provider, HTTPS base URL, explicit model, and API key once;
+click **Test Connection / 测试连接**, then **Save / 保存**. The probe uses the
+real provider abstraction and creates no workflow records. Provider metadata is
+stored in a user-local configuration outside the repository, and the API key
+is protected with Windows user-scoped DPAPI. It is injected only into the
+AgentForge-owned backend child, never into Vite/frontend, command-line
+arguments, logs, diagnostics, or SQLite.
+
+At startup, an explicit process environment provider override is authoritative;
+otherwise the launcher loads one complete saved configuration. If neither is
+usable, product mode reports `NOT_CONFIGURED` and never silently falls back to
+Mock. `mock` remains an intentional offline development/test mode and is
+labeled `MOCK` by diagnostics. The optional ignored `launcher/.env.local`
+continues to support safe developer overrides; it must not contain a secret.
+
+The settings dialog preserves a previously saved key when the masked field is
+left unchanged. A failed candidate connection does not replace the active
+configuration. Use **Clear / 清除** in the dialog to return to
+`NOT_CONFIGURED`; this does not enable Mock.
 
 Closing the compact window hides it to the system tray. Tray commands are
 `Open AgentForge`, `Open Launcher`, `Stop Services`, `Restart Services`, and

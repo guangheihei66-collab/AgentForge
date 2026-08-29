@@ -32,7 +32,7 @@ Phase 0 storage policy approved. Phase 1.1 architecture and Phase 1.2 MVP scope 
 
 The Phase 11.2 MVP capabilities are `repository_state -> git_read`, `project_metadata -> file_read`, and `test_verification -> test_run`. Resolution fails closed unless exactly one registered, enabled, permission-compatible, parameter-valid candidate exists. Legacy concrete-tool plans remain readable but cannot request Phase 11.2 approval or execute through the new Runtime.
 
-The real provider is opt-in through environment configuration, fails closed when invalid, and cannot select concrete tools or bypass validation, approval, Runtime, or ToolGateway. Provider credentials and endpoint configuration are not persisted or exposed through the API. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
+The real provider is opt-in through explicit process configuration or the compact launcher AI Provider Settings flow. Product mode fails closed when invalid and cannot select concrete tools or bypass validation, approval, Runtime, or ToolGateway. Non-secret provider metadata is persisted in a user-local configuration outside the repository; the API key is protected with Windows user-scoped DPAPI, injected only into the AgentForge-owned backend child, and never exposed through the API. Docker, PostgreSQL, RBAC, and write-capable tools have not started.
 
 Re-planning is limited to two successor attempts and twelve total steps across plan versions. Replan context is capped at 8 KiB and the complete prompt at 12 KiB. Every successor version, including safe-read-only plans, requires a fresh approval bound to its exact resolved snapshots. Plan v1 remains immutable and its approval cannot authorize v2. Only bounded summaries, fingerprints, reason codes, and evidence references are audited; Chain of Thought, raw provider output, raw tool output, and provider credentials are not stored. Mock re-planning is deterministic and offline, and real-provider failures never silently fall back to Mock.
 
@@ -56,6 +56,7 @@ Project Capability policy defaults to empty and future registry additions are ne
 - The AI Analyst receives only a bounded persisted EvidencePackage after terminal Runtime facts are committed. Strict schema and same-task evidence-reference validation run before a canonical hash-verified external report artifact is accepted; Analyst status and safe metadata reuse AuditEvent without a new database table.
 - Analyst recommendations are informational and never authorize execution. Provider failure, malformed output, invalid evidence references, or artifact tampering preserve the authoritative Task, ToolExecution, Observation, Evidence, and Audit facts.
 - The launcher uses a root-scoped native Mutex/Event boundary, hidden process-owned service children, and external runtime logs; normal startup never seeds business data and never terminates foreign Python, Node, or port owners.
+- The launcher AI Provider Settings flow uses an atomic process-override-or-saved-config precedence, real-provider-only connection probes, masked secret input, DPAPI user-local storage, and controlled restart of only AgentForge-owned services.
 
 ## Resolved bugs
 

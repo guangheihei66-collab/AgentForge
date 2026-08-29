@@ -113,16 +113,21 @@ Frontend: React, TypeScript, Vite, Tailwind CSS.
 
 AI boundary: a unified `LLMProvider` interface supports the deterministic mock and a bounded OpenAI-compatible HTTP transport. The model proposes semantic capabilities only; validation, concrete tool resolution, approval, Runtime, and ToolGateway remain application-controlled.
 
-Provider selection is environment-only. Product mode requires an explicit
-`AGENTFORGE_LLM_PROVIDER` setting and fails closed when it is missing or
-invalid. Set `AGENTFORGE_LLM_PROVIDER=mock` only for an intentional offline
-development/test run; the deterministic provider is labeled `MOCK` in
-diagnostics and is never a silent production fallback. To use the
-OpenAI-compatible transport, set `AGENTFORGE_LLM_PROVIDER=openai-compatible`
-plus the base URL, model, and API key documented in `.env.example`. Non-local
-endpoints require HTTPS. Credentials are never returned by the status API or
-editable in the console, and connection tests run only after an explicit
-operator action.
+Product mode requires an explicit provider configuration and fails closed when
+it is missing or invalid. Normal users configure the real provider once from
+the compact launcher through **AI Provider Settings / AI 设置**; provider and
+model metadata are stored in a user-local configuration outside the repository,
+while the API key is protected with Windows user-scoped DPAPI. The launcher
+loads one complete saved configuration into the AgentForge backend only; the
+frontend child never receives the key. An explicit process environment
+provider override remains authoritative, followed by the saved user
+configuration, then `NOT_CONFIGURED`. Set `AGENTFORGE_LLM_PROVIDER=mock` only
+for an intentional offline development/test run; diagnostics labels it
+`MOCK` and it is never a silent production fallback. To use the
+OpenAI-compatible transport, provide the HTTPS base URL, explicit model, and
+external API key through AI Provider Settings or the documented developer
+environment override. Credentials are never returned by the status API, and
+connection tests run only after an explicit operator action.
 
 The MVP uses a custom state machine and three allowlisted tools: Git read, File read, and predefined Test profiles.
 
@@ -152,6 +157,24 @@ Double-click [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop AgentForge pro
 These root-level files are wrappers around the existing `launcher/` scripts. Runtime logs and PID files remain under `D:\AgentProjectData\AgentForge\runtime`.
 
 The launcher starts the backend and frontend, waits for health/readiness, and opens the dashboard. Normal startup is infrastructure-only and does not create Projects, Tasks, Approvals, ToolExecutions, Evidence, or execute tools.
+
+## AI Provider Settings
+
+For normal desktop use:
+
+1. Start **AgentForge 一键启动**.
+2. Open **AI Provider Settings / AI 设置** in the compact launcher.
+3. Enter the supported provider, HTTPS base URL, explicit model, and API key.
+4. Click **Test Connection / 测试连接**.
+5. After a successful test, click **Save / 保存**.
+
+The connection probe uses the real configured provider and creates no Task,
+Plan, Approval, ToolExecution, Observation, Evidence, Report, or workflow
+database mutation. The API key is shown only as a masked field, is never
+returned to the React console, and is stored using Windows user-local secure
+storage. Changing or clearing the configuration is performed from the same
+launcher dialog; the launcher restarts only AgentForge-owned services when
+needed. No terminal command is required for ordinary users.
 
 Use [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop only the AgentForge process tree. Runtime logs and PID files remain outside the source tree.
 

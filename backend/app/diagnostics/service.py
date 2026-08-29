@@ -21,16 +21,16 @@ def _provider() -> tuple[dict[str, object], str]:
 
         snapshot = connection_state.get()
         if not config.configured:
-            return {"provider": config.provider, "model": config.model or "not-configured", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": "NOT_CONFIGURED"}, "DEGRADED"
+            return {"provider": config.provider, "model": config.model or "not-configured", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "configuration": "NOT_CONFIGURED", "connection": "NOT_CONFIGURED"}, "DEGRADED"
         if config.provider == "mock":
             connection = {"success": "SUCCESS", "failed": "FAILED"}.get(snapshot.status, "UNKNOWN")
             state = "HEALTHY" if snapshot.status == "success" else ("DEGRADED" if snapshot.status == "failed" else "UNKNOWN")
-            return {"provider": "mock", "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": connection}, state
+            return {"provider": "mock", "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "configuration": "CONFIGURED", "connection": connection}, state
         connection = {"success": "SUCCESS", "failed": "FAILED"}.get(snapshot.status, "UNKNOWN")
         state = "HEALTHY" if snapshot.status == "success" else ("DEGRADED" if snapshot.status == "failed" else "UNKNOWN")
-        return {"provider": config.provider, "model": config.model or "not-configured", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": connection}, state
+        return {"provider": config.provider, "model": config.model or "not-configured", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "configuration": "CONFIGURED", "connection": connection}, state
     except Exception:
-        return {"provider": "UNKNOWN", "model": "UNKNOWN", "structured_output_mode": "UNKNOWN", "credential_configured": False, "connection": "UNKNOWN"}, "UNKNOWN"
+        return {"provider": "UNKNOWN", "model": "UNKNOWN", "structured_output_mode": "UNKNOWN", "credential_configured": False, "configuration": "UNKNOWN", "connection": "UNKNOWN"}, "UNKNOWN"
 
 
 _COMMAND_RECEIVED_EVENTS = {
@@ -124,7 +124,9 @@ def _command_provenance(
     )
 
 
-def _analyst_snapshot(session: Session, task_id: str) -> AnalystDiagnosticsRead:
+def _analyst_snapshot(
+    session: Session, task_id: str, *, provider_configured: bool
+) -> AnalystDiagnosticsRead:
     data_root = Path(
         os.getenv("AGENTFORGE_DATA_ROOT", r"D:\AgentProjectData\AgentForge")
     )
@@ -138,6 +140,8 @@ def _analyst_snapshot(session: Session, task_id: str) -> AnalystDiagnosticsRead:
         synthesis_mode = "FAILED"
     elif read_model.status.value == "SUCCEEDED":
         synthesis_mode = "MOCK" if read_model.provider == "mock" else "REAL"
+    elif not provider_configured:
+        synthesis_mode = "NOT_CONFIGURED"
     return AnalystDiagnosticsRead(
         status=read_model.status.value,
         synthesis_mode=synthesis_mode,
@@ -192,7 +196,11 @@ def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
     backend_state = "HEALTHY"
     recent = session.scalars(select(TaskRecord).order_by(TaskRecord.updated_at.desc()).limit(1)).first()
     recent_task = None
-    analyst = AnalystDiagnosticsRead(status="NOT_REQUESTED")
+    provider_configured = provider.get("configuration") == "CONFIGURED"
+    analyst = AnalystDiagnosticsRead(
+        status="NOT_REQUESTED",
+        synthesis_mode="NOT_REQUESTED" if provider_configured else "NOT_CONFIGURED",
+    )
     command_provenance = None
     planner_provider = None
     planner_model = None
@@ -204,7 +212,9 @@ def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
         failed = execution_counts.get("FAILED", 0)
         rejected = execution_counts.get("REJECTED", 0)
         recent_task = RecentTaskRead(id=recent.id, state=recent.status, plan_version=plan.version if plan else None, approval=approval.decision if approval else None, executions=ExecutionCountsRead(total=sum(execution_counts.values()), success=success, failed=failed, rejected=rejected), evidence_count=session.scalar(select(func.count()).select_from(EvidenceRecord).where(EvidenceRecord.task_id == recent.id)) or 0, observation_count=session.scalar(select(func.count()).select_from(AuditEventRecord).where(AuditEventRecord.task_id == recent.id, AuditEventRecord.event_type.ilike("%observation%"))) or 0, replan_count=session.scalar(select(func.count()).select_from(AuditEventRecord).where(AuditEventRecord.task_id == recent.id, AuditEventRecord.event_type.ilike("%replan%"))) or 0)
-        analyst = _analyst_snapshot(session, recent.id)
+        analyst = _analyst_snapshot(
+            session, recent.id, provider_configured=provider_configured
+        )
         planner_provider, planner_model = _planner_metadata(session, recent.id, provider)
         command_provenance = _command_provenance(session, recent)
     return DiagnosticsRead(identity=RuntimeIdentityRead(**identity.__dict__) if hasattr(identity, "__dict__") else RuntimeIdentityRead(product=identity.product, version=identity.version, revision=identity.revision, environment=identity.environment), health=HealthRead(overall=classify_overall(backend=backend_state, database=database_state, provider=provider_state), backend=backend_state, database=database_state, provider=provider_state), provider=provider, recent_task=recent_task, analyst=analyst, planner_provider=planner_provider, planner_model=planner_model, analyst_provider=analyst.provider, analyst_model=analyst.model, analyst_synthesis_mode=analyst.synthesis_mode, command_provenance=command_provenance, recent_errors=[])

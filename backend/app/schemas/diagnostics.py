@@ -6,7 +6,9 @@ from pydantic import BaseModel
 
 HealthState = Literal["HEALTHY", "DEGRADED", "UNHEALTHY", "UNKNOWN"]
 AnalystStatus = Literal["NOT_REQUESTED", "PENDING", "GENERATING", "SUCCEEDED", "FAILED"]
-AnalystSynthesisMode = Literal["REAL", "MOCK", "FAILED", "NOT_REQUESTED"]
+AnalystSynthesisMode = Literal[
+    "REAL", "MOCK", "FAILED", "NOT_REQUESTED", "NOT_CONFIGURED"
+]
 
 
 class RuntimeIdentityRead(BaseModel):

@@ -43,6 +43,27 @@ def test_diagnostics_endpoint_is_read_only_and_secret_free():
     assert payload["identity"]["product"] == "AgentForge"
 
 
+def test_diagnostics_reports_unconfigured_provider_truthfully(monkeypatch):
+    for key in (
+        "AGENTFORGE_LLM_PROVIDER",
+        "AGENTFORGE_LLM_BASE_URL",
+        "AGENTFORGE_LLM_MODEL",
+        "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE",
+        "AGENTFORGE_LLM_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with TestClient(app) as client:
+        response = client.get("/diagnostics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"]["configuration"] == "NOT_CONFIGURED"
+    assert payload["provider"]["connection"] == "NOT_CONFIGURED"
+    assert payload["analyst_synthesis_mode"] == "NOT_CONFIGURED"
+    assert payload["analyst"]["synthesis_mode"] == "NOT_CONFIGURED"
+
+
 def test_diagnostics_reflects_explicit_provider_success():
     with TestClient(app) as client:
         probe = client.post("/llm/provider/test")

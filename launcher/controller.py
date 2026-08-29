@@ -17,7 +17,7 @@ import urllib.request
 import webbrowser
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, MutableMapping, Sequence
 from uuid import uuid4
 
 from .process_session import (
@@ -141,10 +141,23 @@ def launcher_data_root(environ: Mapping[str, str] | None = None) -> Path:
     return _canonical(Path(environment.get("AGENTFORGE_DATA_ROOT", str(DEFAULT_DATA_ROOT))))
 
 
-def launcher_environment(root: Path, session_token: str, environ: Mapping[str, str] | None = None) -> dict[str, str]:
-    """Build child environment while preserving process-local cache settings."""
+def launcher_environment(
+    root: Path,
+    session_token: str,
+    environ: Mapping[str, str] | None = None,
+    *,
+    include_provider_secret: bool = False,
+) -> dict[str, str]:
+    """Build one child environment while preserving process-local cache settings.
+
+    The backend receives the provider secret through its environment because
+    that is the existing provider contract.  Frontend children use the safe
+    default and never receive the secret.
+    """
 
     environment = dict(os.environ if environ is None else environ)
+    if not include_provider_secret:
+        environment.pop("AGENTFORGE_LLM_API_KEY", None)
     backend_path = str(_canonical(root) / "backend")
     existing_pythonpath = environment.get("PYTHONPATH", "")
     environment["PYTHONPATH"] = (
@@ -238,6 +251,7 @@ class LauncherController:
         self.error: str | None = None
         self._browser_opened = False
         self._operation_lock = threading.RLock()
+        self.provider_settings_store: Any | None = None
 
     @staticmethod
     def _port_in_use(port: int) -> bool:
@@ -351,7 +365,11 @@ class LauncherController:
         return True
 
     def _start_kwargs(self, label: str) -> dict[str, Any]:
-        environment = launcher_environment(self.root, self.session_token)
+        environment = launcher_environment(
+            self.root,
+            self.session_token,
+            include_provider_secret=label.casefold() == "backend",
+        )
         return {
             "cwd": str(self.root / label),
             "env": environment,
@@ -569,10 +587,23 @@ class ControllerWindowActions:
         self.hide()
 
 
-def load_launcher_environment(root: Path) -> None:
-    """Load only safe, non-secret local launcher settings into this process."""
+def load_launcher_environment(
+    root: Path,
+    *,
+    environ: MutableMapping[str, str] | None = None,
+    store: Any | None = None,
+    local_config_path: Path | None = None,
+    force_persisted: bool = False,
+) -> None:
+    """Load local settings without creating an ambiguous mixed configuration.
 
-    config_path = _canonical(root) / "launcher" / ".env.local"
+    A non-empty provider environment value is an atomic operator override.  If
+    it is absent, one complete saved user configuration is loaded instead.
+    ``force_persisted`` is used only after an explicit save in the launcher UI.
+    """
+
+    target = os.environ if environ is None else environ
+    config_path = local_config_path or (_canonical(root) / "launcher" / ".env.local")
     allowed = {
         "AGENTFORGE_PYTHON",
         "AGENTFORGE_LLM_PROVIDER",
@@ -580,29 +611,73 @@ def load_launcher_environment(root: Path) -> None:
         "AGENTFORGE_LLM_MODEL",
         "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE",
     }
-    if not config_path.is_file():
+    if config_path.is_file():
+        try:
+            lines = config_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = ()
+        for line in lines:
+            trimmed = line.strip()
+            if not trimmed or trimmed.startswith(("#", ";")) or "=" not in trimmed:
+                continue
+            name, value = (part.strip() for part in trimmed.split("=", 1))
+            if name not in allowed or target.get(name):
+                continue
+            if len(value) >= 2 and value[0] == value[-1] == '"':
+                value = value[1:-1]
+            target[name] = value
+
+    if store is None:
+        from app.agents.providers.settings import ProviderSettingsStore
+
+        store = ProviderSettingsStore()
+    if force_persisted:
+        saved = store.environment()
+        for name in (
+            "AGENTFORGE_LLM_PROVIDER",
+            "AGENTFORGE_LLM_BASE_URL",
+            "AGENTFORGE_LLM_MODEL",
+            "AGENTFORGE_LLM_API_KEY",
+            "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE",
+        ):
+            target.pop(name, None)
+        target.update(saved)
         return
-    try:
-        lines = config_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+
+    if str(target.get("AGENTFORGE_LLM_PROVIDER", "")).strip():
         return
-    for line in lines:
-        trimmed = line.strip()
-        if not trimmed or trimmed.startswith(("#", ";")) or "=" not in trimmed:
-            continue
-        name, value = (part.strip() for part in trimmed.split("=", 1))
-        if name not in allowed or os.environ.get(name):
-            continue
-        if len(value) >= 2 and value[0] == value[-1] == '"':
-            value = value[1:-1]
-        os.environ[name] = value
+    target.update(store.environment())
 
 
 def run_controller(root: Path) -> int:
     import tkinter as tk
 
     root = _canonical(root)
-    load_launcher_environment(root)
+    backend_path = str(root / "backend")
+    if backend_path not in sys.path:
+        sys.path.insert(0, backend_path)
+    from .provider_settings import (
+        ConnectionTestResult,
+        ProviderSettingsService,
+        SubprocessProviderConnection,
+    )
+
+    def run_provider_connection(config: Any) -> ConnectionTestResult:
+        try:
+            python = resolve_python(root)
+        except FileNotFoundError:
+            return ConnectionTestResult(
+                success=False,
+                failure_category="PROVIDER_RUNTIME_UNAVAILABLE",
+                message="Provider runtime is unavailable",
+            )
+        return SubprocessProviderConnection(
+            python_path=python,
+            backend_path=root / "backend",
+        )(config)
+
+    settings_service = ProviderSettingsService(connection_runner=run_provider_connection)
+    load_launcher_environment(root, store=settings_service.store)
     os.environ["PYTHONPATH"] = str(root / "backend") + (
         os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""
     )
@@ -618,13 +693,14 @@ def run_controller(root: Path) -> int:
         return 0
 
     controller = LauncherController(root=root)
+    controller.provider_settings_store = settings_service.store
     tray: AgentForgeTray | None = None
     exiting = False
     operation_pending = False
     ui_queue: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...]]] = queue.Queue()
 
     window.title("AgentForge Launcher")
-    window.geometry("410x285")
+    window.geometry("470x360")
     window.resizable(False, False)
 
     tk.Label(window, text="AgentForge", font=("Segoe UI", 18, "bold")).pack(pady=(14, 2))
@@ -632,9 +708,10 @@ def run_controller(root: Path) -> int:
     launcher_text = tk.StringVar()
     backend_text = tk.StringVar()
     frontend_text = tk.StringVar()
+    provider_text = tk.StringVar()
     database_text = tk.StringVar(value="Database: guarded by backend")
     message = tk.StringVar()
-    for variable in (launcher_text, backend_text, frontend_text, database_text):
+    for variable in (launcher_text, backend_text, frontend_text, provider_text, database_text):
         tk.Label(window, textvariable=variable, anchor="w").pack(fill="x", padx=36)
     tk.Label(window, textvariable=message, fg="#a33", wraplength=340).pack(pady=5)
     buttons = tk.Frame(window)
@@ -644,6 +721,13 @@ def run_controller(root: Path) -> int:
         launcher_text.set(f"Launcher: {controller.state.value}")
         backend_text.set(f"Backend: {controller.backend.state.value}")
         frontend_text.set(f"Frontend: {controller.frontend.state.value}")
+        provider = settings_service.snapshot()
+        if provider.configured:
+            provider_text.set(f"AI Provider: Configured · {provider.provider} · {provider.model}")
+        elif provider.provider != "unconfigured":
+            provider_text.set("AI Provider: Not configured (saved settings unavailable)")
+        else:
+            provider_text.set("AI Provider: Not configured")
         message.set(controller.error or "")
         open_button.configure(state=tk.NORMAL if controller.can_open else tk.DISABLED)
         restart_button.configure(state=tk.DISABLED if operation_pending else tk.NORMAL)
@@ -727,6 +811,25 @@ def run_controller(root: Path) -> int:
         elif command in (InstanceCommand.EXIT, TrayCommand.EXIT):
             exit_launcher()
 
+    def apply_saved_provider_settings() -> None:
+        load_launcher_environment(
+            controller.root,
+            store=settings_service.store,
+            force_persisted=True,
+        )
+        update()
+        run_operation(controller.restart_services)
+
+    def open_provider_settings() -> None:
+        from .provider_dialog import open_provider_settings as open_dialog
+
+        open_dialog(
+            window,
+            settings_service,
+            on_saved=apply_saved_provider_settings,
+            on_cleared=apply_saved_provider_settings,
+        )
+
     def on_instance_command(command: InstanceCommand) -> None:
         post_ui(handle_command, command)
 
@@ -741,6 +844,9 @@ def run_controller(root: Path) -> int:
     restart_button.grid(row=0, column=1, padx=3)
     tk.Button(buttons, text="Stop Services", command=lambda: run_operation(controller.stop_services)).grid(
         row=0, column=2, padx=3
+    )
+    tk.Button(buttons, text="AI 设置 / AI Provider", command=open_provider_settings).grid(
+        row=1, column=0, columnspan=3, pady=(8, 0)
     )
     tk.Button(window, text="Exit AgentForge", command=exit_launcher).pack(pady=(3, 8))
     window.protocol("WM_DELETE_WINDOW", actions.close_x)
