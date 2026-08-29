@@ -24,7 +24,9 @@ from ..providers.base import (
 )
 from .prompts import build_planning_prompt
 from ...metadata_manifest import build_metadata_manifest
+from ...contracts.analysis import RELEASE_READINESS_PROFILE
 from .schemas import PlanContract
+from .quality import validate_plan_quality
 from .validator import PlanValidationError, PlanValidator
 
 
@@ -72,12 +74,18 @@ class PlannerAgent:
         self.session.commit()
         stage = "provider"
         try:
+            request_context = {
+                **(context or {}),
+                "authorized_capability_ids": list(
+                    project_context.allowed_capability_ids
+                ),
+            }
             request = LLMRequest(
                 prompt=build_planning_prompt(
                     task.goal,
                     effective_registry,
                     {
-                        **(context or {}),
+                        **request_context,
                         "project": {
                             "name": project.name,
                             "environment": project.environment,
@@ -87,17 +95,33 @@ class PlannerAgent:
                         "metadata_manifest": list(metadata_manifest),
                     },
                 ),
-                context=context or {},
+                context=request_context,
                 output_schema=PlanContract.model_json_schema(),
             )
             response = self.provider.generate_plan(request)
             stage = "plan_validation"
             plan = validator.validate(dict(response.payload), project_context.workspace_root)
+            analysis_profile = (context or {}).get("analysis_profile")
+            validate_plan_quality(
+                plan,
+                analysis_profile=analysis_profile
+                if isinstance(analysis_profile, str)
+                else None,
+                authorized_capability_ids=project_context.allowed_capability_ids,
+            )
             stage = "capability_resolution"
             record = self.plans.create(
                 task_id=task_id,
                 version=self.plans.next_version(task_id),
-                plan_json={**plan.model_dump(mode="json"), "resolved_steps": []},
+                plan_json={
+                    **plan.model_dump(mode="json"),
+                    "resolved_steps": [],
+                    **(
+                        {"analysis_profile": RELEASE_READINESS_PROFILE}
+                        if analysis_profile == RELEASE_READINESS_PROFILE
+                        else {}
+                    ),
+                },
                 validation_status="VALID",
             )
             resolved_steps = []
@@ -138,6 +162,11 @@ class PlannerAgent:
                 **plan.model_dump(mode="json"),
                 "resolved_steps": resolved_steps,
                 "project_authority": project_context.authority_snapshot().to_dict(),
+                **(
+                    {"analysis_profile": RELEASE_READINESS_PROFILE}
+                    if analysis_profile == RELEASE_READINESS_PROFILE
+                    else {}
+                ),
             }
             self._audit_llm(
                 task_id,
@@ -163,47 +192,60 @@ class PlannerAgent:
             )
             self.session.commit()
         except (ProviderError, PlanValidationError, CapabilityResolutionError, ValueError) as exc:
-            self.session.rollback()
-            category = (
-                exc.category
-                if isinstance(exc, ProviderError)
-                else ProviderErrorCategory.INVALID_RESPONSE
-            )
-            self._audit_llm(
-                task_id,
-                "LLM_PLAN_FAILED",
-                {
-                    "provider": self.provider.provider_name,
-                    "model": self.provider.model_name,
-                    "failure_category": category.value,
-                    "validation_stage": stage,
-                    "attempt_count": getattr(exc, "attempt_count", 1),
-                    "duration_ms": getattr(exc, "duration_ms", 0),
-                    "provider_diagnostics": (
-                        getattr(exc, "diagnostics", {})
-                        if isinstance(exc, ProviderError)
-                        else {}
-                    ),
-                    "validation_diagnostics": (
-                        getattr(exc, "diagnostics", {})
-                        if isinstance(exc, PlanValidationError)
-                        else {}
-                    ),
-                },
-            )
-            self.tasks.transition_task(
-                task_id,
-                TaskStatus.FAILED,
-                actor="planner",
-                reason=f"Planning failed: {category.value}",
-            )
+            self._record_planning_failure(task_id, exc, stage)
             raise
+        except Exception as exc:
+            # A provider adapter must not strand a Task in PLANNING if it
+            # leaks an unexpected exception.  Convert it to the same safe
+            # provider contract exposed by known provider failures while
+            # preserving the original exception only as a private cause.
+            failure = ProviderError(ProviderErrorCategory.PROVIDER_ERROR)
+            self._record_planning_failure(task_id, failure, stage)
+            raise failure from exc
         self.tasks.transition_task(
             task_id,
             TaskStatus.WAITING_APPROVAL,
             reason=f"Plan version {record.version} validated",
         )
         return record
+
+    def _record_planning_failure(
+        self, task_id: str, exc: Exception, stage: str
+    ) -> None:
+        self.session.rollback()
+        category = (
+            exc.category
+            if isinstance(exc, ProviderError)
+            else ProviderErrorCategory.INVALID_RESPONSE
+        )
+        self._audit_llm(
+            task_id,
+            "LLM_PLAN_FAILED",
+            {
+                "provider": self.provider.provider_name,
+                "model": self.provider.model_name,
+                "failure_category": category.value,
+                "validation_stage": stage,
+                "attempt_count": getattr(exc, "attempt_count", 1),
+                "duration_ms": getattr(exc, "duration_ms", 0),
+                "provider_diagnostics": (
+                    getattr(exc, "diagnostics", {})
+                    if isinstance(exc, ProviderError)
+                    else {}
+                ),
+                "validation_diagnostics": (
+                    getattr(exc, "diagnostics", {})
+                    if isinstance(exc, PlanValidationError)
+                    else {}
+                ),
+            },
+        )
+        self.tasks.transition_task(
+            task_id,
+            TaskStatus.FAILED,
+            actor="planner",
+            reason=f"Planning failed: {category.value}",
+        )
 
     def _audit_llm(self, task_id: str, event_type: str, payload: dict[str, Any]) -> None:
         self.session.add(

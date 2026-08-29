@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import type { Approval, ApprovalQueueItem, CapabilityPlanStep, Plan, ProjectDetail, ProjectSummary, ProviderStatus, Report, ResolvedExecutionSnapshot, TaskDetail, TaskSummary } from '../types'
 
@@ -37,9 +38,10 @@ const demoPlan: Plan = { id: 'plan-demo', version: 1, validation_status: 'VALID'
 const demoSnapshot = { schema_version: 2 as const, project_authority: demoAuthority, steps: demoResolved }
 const demoApproval: ApprovalQueueItem = { id: 'approval-demo', task_id: demoTask.id, task_title: demoTask.title, plan_id: demoPlan.id, plan_version: 1, decision: 'PENDING', requested_by: 'planner-agent', created_at: '2026-08-21T14:32:01Z', plan_json: demoPlan.plan_json, resolved_snapshot: demoSnapshot }
 const demoDetail: TaskDetail = { task: demoTask, plans: [demoPlan], approvals: [{ id: demoApproval.id, plan_id: demoPlan.id, decision: 'PENDING', approver: 'pending', resolved_snapshot: demoSnapshot, created_at: demoApproval.created_at }], executions: [], evidence: [], audit: [{ id: 'audit-1', event_type: 'TASK_CREATED', actor: 'operator', payload_summary: 'Task created', correlation_id: 'corr-1', created_at: demoTask.created_at }, { id: 'audit-2', event_type: 'PLAN_CREATED', actor: 'planner', payload_summary: 'Validated plan version 1', correlation_id: 'corr-2', created_at: '2026-08-21T14:22:41Z' }] }
-const demoProvider: ProviderStatus = { provider: 'mock', model: 'deterministic-mock', configured: true, credential_configured: false, connection_status: 'not tested' }
+const unconfiguredProvider: ProviderStatus = { provider: 'unconfigured', model: 'not-configured', configured: false, credential_configured: false, connection_status: 'failed' }
 
 export function useOperations() {
+  const { i18n } = useTranslation()
   const [tasks, setTasks] = useState<TaskSummary[]>([demoTask])
   const [projects, setProjects] = useState<ProjectSummary[]>([demoProject])
   const [project, setProject] = useState<ProjectDetail>(demoProject)
@@ -50,7 +52,7 @@ export function useOperations() {
   const [detail, setDetail] = useState<TaskDetail>(demoDetail)
   const [report, setReport] = useState<Report>({ task: demoTask, readiness: 'PENDING', summary: 'Awaiting human approval before execution.', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 2, execution_count: 0 })
   const [live, setLive] = useState(false)
-  const [providerStatus, setProviderStatus] = useState<ProviderStatus>(demoProvider)
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus>(unconfiguredProvider)
   const [testingProvider, setTestingProvider] = useState(false)
   const [agentPlanning, setAgentPlanning] = useState(false)
   const [agentError, setAgentError] = useState<string | null>(null)
@@ -61,6 +63,7 @@ export function useOperations() {
   const agentCreateInFlight = useRef(false)
   const executionInFlight = useRef(false)
   const agentApprovalInFlight = useRef(false)
+  const analystLanguage = i18n.language === 'zh-CN' ? 'zh-CN' as const : 'en-US' as const
   useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
   const selectAgentTask = useCallback((id: string | undefined) => {
     selectedIdRef.current = id
@@ -130,7 +133,9 @@ export function useOperations() {
     const requestId = ++providerStatusRequestId.current
     void api.getProviderStatus().then((status) => {
       if (requestId === providerStatusRequestId.current) setProviderStatus(status)
-    }).catch(() => undefined)
+    }).catch(() => {
+      if (requestId === providerStatusRequestId.current) setProviderStatus(unconfiguredProvider)
+    })
   }, [])
 
   async function testProviderConnection() {
@@ -161,6 +166,7 @@ export function useOperations() {
         plan_id: item.plan_id,
         plan_version: item.plan_version,
         actor: 'operator',
+        language: analystLanguage,
       })
     } catch (error) {
       setAgentError(agentCommandError(error))
@@ -180,10 +186,14 @@ export function useOperations() {
     agentCreateInFlight.current = true
     setAgentPlanning(true)
     setAgentError(null)
+    let created: TaskSummary | undefined
     try {
-      const created = await api.createTask({ project_id: projectId, title: 'Repository Analyst Agent', goal })
+      created = await api.createTask({ project_id: projectId, title: 'Repository Analyst Agent', goal })
       selectAgentTask(created.id)
-      const plan = await api.createPlan(created.id)
+      const plan = await api.createPlan(created.id, {
+        source: 'agent',
+        analysis_profile: 'release_readiness',
+      })
       let authoritativeDetail = await api.getTaskDetail(created.id)
       const matching = authoritativeDetail.approvals.find((item) => item.plan_id === plan.id && item.resolved_snapshot && item.decision !== 'REJECTED')
       if (!matching) {
@@ -198,6 +208,17 @@ export function useOperations() {
       await refreshTask(created.id)
       return created
     } catch (error) {
+      if (created) {
+        try {
+          // The Planner endpoint owns the authoritative failure transition.
+          // Refresh it before rendering the error so the console cannot retain
+          // the previous demo/Task projection after planning has failed.
+          await refreshTask(created.id)
+        } catch {
+          // Preserve the original planning error when the display-only refresh
+          // is unavailable.
+        }
+      }
       const message = error instanceof Error ? error.message : 'Agent planning failed.'
       setAgentError(message)
       throw error
@@ -221,6 +242,7 @@ export function useOperations() {
         plan_id: currentPlan.id,
         plan_version: currentPlan.version,
         actor: 'operator',
+        language: analystLanguage,
       })
       await refreshTask(selectedId)
     } finally {

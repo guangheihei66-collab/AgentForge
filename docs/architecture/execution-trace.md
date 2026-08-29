@@ -19,6 +19,9 @@ Evidence (artifact reference + content hash)
   |
   v
 AuditEvent (append-only timeline)
+  |
+  v
+Bounded EvidencePackage -> AI Analyst -> hash-verified Report artifact
 ```
 
 ## Record relationship
@@ -30,15 +33,46 @@ AuditEvent (append-only timeline)
 | Approval | Human decision for one plan version | `task_id` + `plan_id` + version binding |
 | ToolExecution | Governed tool request and result | `task_id`, tool name, status, artifact reference |
 | Evidence | Reusable proof of a result | `task_id`, artifact path, optional content hash |
-| AuditEvent | Timeline of state, approval, and execution events | `task_id`, actor, event type, correlation ID |
+| AuditEvent | Timeline of state, approval, execution, and Analyst synthesis events | `task_id`, actor, event type, correlation ID |
+| Analyst Report | Derived evidence-grounded assessment, not authority | External artifact bound to `task_id`, `plan_id`, version, and SHA-256 |
 
 ## Trace rules
 
 - A plan must validate against the tool and workspace allowlists before approval.
 - An `APPROVED_EXEC` tool requires an approved, matching plan version and a non-cancelled task.
 - A successful tool execution can create evidence; failed execution still creates an audit record.
-- Reports aggregate execution, evidence, and audit counts; they do not replace the underlying records.
+- Reports aggregate execution, evidence, and audit counts; the AI Analyst adds a separately validated derived assessment and does not replace the underlying records.
 - The UI reads aggregate detail and report endpoints, while the backend remains the source of truth.
+
+## AI Analyst trace
+
+The Analyst runs only after a terminal Runtime outcome has committed its
+ToolExecution, Observation, Evidence, and Task lifecycle facts. Its bounded
+input contains no credentials, raw logs, raw provider response, prompt,
+unbounded tool output, or hidden reasoning. Repository/tool text is untrusted
+data, and prompt-injection content cannot change the Analyst's privileges.
+
+The Analyst lifecycle is distinct from Task readiness:
+
+```text
+NOT_REQUESTED -> PENDING -> GENERATING -> SUCCEEDED | FAILED
+```
+
+`SUCCEEDED` means a schema-valid, evidence-reference-valid report artifact was
+written and hash recorded. `FAILED` means no accepted report exists; the
+governed execution facts remain authoritative and readable. A `READY` report
+recommendation is informational only and never starts execution or approves a
+Plan. Historical Tasks without Analyst events remain readable as
+`NOT_REQUESTED`.
+
+The durable events are:
+
+| Event | Meaning |
+| --- | --- |
+| `ANALYST_SYNTHESIS_REQUESTED` | Terminal governed facts entered the synthesis boundary. |
+| `ANALYST_SYNTHESIS_STARTED` | The configured provider was called with bounded evidence data. |
+| `ANALYST_SYNTHESIS_SUCCEEDED` | Validated report artifact and hash were persisted. |
+| `ANALYST_SYNTHESIS_FAILED` | Provider, validation, reference, or artifact failure was recorded safely. |
 
 ## Approval command provenance
 

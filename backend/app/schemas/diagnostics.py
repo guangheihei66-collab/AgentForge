@@ -1,9 +1,14 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
 
 
 HealthState = Literal["HEALTHY", "DEGRADED", "UNHEALTHY", "UNKNOWN"]
+AnalystStatus = Literal["NOT_REQUESTED", "PENDING", "GENERATING", "SUCCEEDED", "FAILED"]
+AnalystSynthesisMode = Literal[
+    "REAL", "MOCK", "FAILED", "NOT_REQUESTED", "NOT_CONFIGURED"
+]
 
 
 class RuntimeIdentityRead(BaseModel):
@@ -54,10 +59,30 @@ class CommandProvenanceRead(BaseModel):
     failure_category: str | None
 
 
+class AnalystDiagnosticsRead(BaseModel):
+    status: AnalystStatus
+    synthesis_mode: AnalystSynthesisMode = "NOT_REQUESTED"
+    task_id: str | None = None
+    plan_id: str | None = None
+    plan_version: int | None = None
+    provider: str | None = None
+    model: str | None = None
+    artifact_path: str | None = None
+    content_hash: str | None = None
+    generated_at: datetime | None = None
+    failure_category: str | None = None
+
+
 class DiagnosticsRead(BaseModel):
     identity: RuntimeIdentityRead
     health: HealthRead
     provider: dict[str, object]
     recent_task: RecentTaskRead | None
+    analyst: AnalystDiagnosticsRead
+    planner_provider: str | None = None
+    planner_model: str | None = None
+    analyst_provider: str | None = None
+    analyst_model: str | None = None
+    analyst_synthesis_mode: AnalystSynthesisMode = "NOT_REQUESTED"
     command_provenance: CommandProvenanceRead | None = None
     recent_errors: list[str]

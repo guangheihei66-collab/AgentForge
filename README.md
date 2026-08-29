@@ -80,6 +80,8 @@ Every new Task starts from a local Project. A Project owns one canonical local w
 
 After bounded diagnostic evidence, Runtime may choose one of four decisions: `CONTINUE`, `COMPLETE`, `FAIL`, or `REPLAN`. A `REPLAN` pauses execution and lets the configured provider propose capability-only remaining steps. Application policy, validation, deterministic resolution, and a fresh human approval all run before a successor version can execute; the previous plan and approval never authorize that successor.
 
+After a terminal Runtime outcome, the downstream AI Analyst receives only a bounded package of persisted Task, Plan, ToolExecution, Observation, Evidence, and lifecycle facts. It returns a strict structured assessment with evidence-linked findings, controlled risk severity, a release recommendation, prioritized next actions, and limitations. The Analyst cannot execute tools, approve plans, choose capabilities, change Project authority, or change Task status. The validated report is stored as a hash-verified JSON artifact under `D:\AgentProjectData\AgentForge\artifacts`; lifecycle metadata is added to the existing AuditEvent stream, so this feature adds no database table or migration. A provider or validation failure preserves the governed execution facts and is shown as a separate Analyst failure state.
+
 ## Security Design
 
 - Permission boundary: default-deny policy with explicit `SAFE_READ` and `APPROVED_EXEC` levels.
@@ -91,16 +93,17 @@ After bounded diagnostic evidence, Runtime may choose one of four decisions: `CO
 - Approval drift protection: changed capability, tool, parameters, plan version, or execution-relevant registry semantics invalidates execution.
 - Project isolation: ACTIVE Projects cannot share a canonical workspace; remote, UNC, traversal, junction/symlink, and cross-Project escapes are rejected.
 - Project lifecycle: archive is one-way and preserves history while blocking Task creation, pending approval, Runtime resume, and Replanning.
+- Analyst boundary: evidence is untrusted input data; prompt-injection text is ignored, evidence references are validated against same-task persisted records, and no chain-of-thought or raw provider output is stored or displayed.
 
 ## Demo Scenario
 
 The Release Verification Agent answers: “Is Release v2.0 ready for release?” The synthetic demo demonstrates:
 
 ```text
-Create Task → Generate Plan → Approve → Execute → Collect Evidence → Generate Report
+Create Task → Generate Plan → Approve → Execute → Collect Evidence → AI Analyst Report
 ```
 
-The controlled tools are `git_read`, `file_read`, and the predefined `test_run` profiles. The permission layer is default-deny and the workspace boundary rejects secret, system, and out-of-scope paths.
+The controlled tools are `git_read`, `file_read`, and the predefined `test_run` profiles. The permission layer is default-deny and the workspace boundary rejects secret, system, and out-of-scope paths. The final report distinguishes execution truth from derived analysis and links material findings back to persisted evidence IDs.
 
 ## Technology Stack
 
@@ -110,21 +113,68 @@ Frontend: React, TypeScript, Vite, Tailwind CSS.
 
 AI boundary: a unified `LLMProvider` interface supports the deterministic mock and a bounded OpenAI-compatible HTTP transport. The model proposes semantic capabilities only; validation, concrete tool resolution, approval, Runtime, and ToolGateway remain application-controlled.
 
-Provider selection is environment-only. The default is `AGENTFORGE_LLM_PROVIDER=mock`. To opt into the OpenAI-compatible transport, set `AGENTFORGE_LLM_PROVIDER=openai-compatible` plus the base URL, model, and API key documented in `.env.example`. Non-local endpoints require HTTPS. Credentials are never returned by the status API or editable in the console, and connection tests run only after an explicit operator action.
+Product mode requires an explicit provider configuration and fails closed when
+it is missing or invalid. Normal users configure the real provider once from
+the compact launcher through **AI Provider Settings / AI 设置**; provider and
+model metadata are stored in a user-local configuration outside the repository,
+while the API key is protected with Windows user-scoped DPAPI. The launcher
+loads one complete saved configuration into the AgentForge backend only; the
+frontend child never receives the key. An explicit process environment
+provider override remains authoritative, followed by the saved user
+configuration, then `NOT_CONFIGURED`. Set `AGENTFORGE_LLM_PROVIDER=mock` only
+for an intentional offline development/test run; diagnostics labels it
+`MOCK` and it is never a silent production fallback. To use the
+OpenAI-compatible transport, provide the HTTPS base URL, explicit model, and
+external API key through AI Provider Settings or the documented developer
+environment override. Credentials are never returned by the status API, and
+connection tests run only after an explicit operator action.
 
 The MVP uses a custom state machine and three allowlisted tools: Git read, File read, and predefined Test profiles.
 
 ## Quick Start
 
-Windows:
+Windows (recommended):
 
-Double-click [`Start-AgentForge.bat`](Start-AgentForge.bat) to start AgentForge.
+Run the shortcut installer once:
+
+```powershell
+.\Create-AgentForge-Desktop-Shortcut.ps1
+```
+
+Then double-click the desktop shortcut **AgentForge 一键启动**.
+
+For this feature worktree, use `-FeatureWorktree`; it creates the clearly
+labelled **AgentForge 一键启动 (RC)** test shortcut without overwriting a main
+installation shortcut.
+
+The root-level batch entry remains available as a compatibility wrapper:
+
+Double-click [`Start-AgentForge.bat`](Start-AgentForge.bat) to dispatch the
+same windowless launcher.
 
 Double-click [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop AgentForge processes.
 
 These root-level files are wrappers around the existing `launcher/` scripts. Runtime logs and PID files remain under `D:\AgentProjectData\AgentForge\runtime`.
 
-The launcher initializes idempotent synthetic demo data under `D:\AgentProjectData\AgentForge\`, starts the backend and frontend, and opens the dashboard. It does not create a Task or execute a tool as part of startup.
+The launcher starts the backend and frontend, waits for health/readiness, and opens the dashboard. Normal startup is infrastructure-only and does not create Projects, Tasks, Approvals, ToolExecutions, Evidence, or execute tools.
+
+## AI Provider Settings
+
+For normal desktop use:
+
+1. Start **AgentForge 一键启动**.
+2. Open **AI Provider Settings / AI 设置** in the compact launcher.
+3. Enter the supported provider, HTTPS base URL, explicit model, and API key.
+4. Click **Test Connection / 测试连接**.
+5. After a successful test, click **Save / 保存**.
+
+The connection probe uses the real configured provider and creates no Task,
+Plan, Approval, ToolExecution, Observation, Evidence, Report, or workflow
+database mutation. The API key is shown only as a masked field, is never
+returned to the React console, and is stored using Windows user-local secure
+storage. Changing or clearing the configuration is performed from the same
+launcher dialog; the launcher restarts only AgentForge-owned services when
+needed. No terminal command is required for ordinary users.
 
 Use [`Stop-AgentForge.bat`](Stop-AgentForge.bat) to stop only the AgentForge process tree. Runtime logs and PID files remain outside the source tree.
 

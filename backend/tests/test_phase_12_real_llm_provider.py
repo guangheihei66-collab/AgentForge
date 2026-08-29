@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError, replace
 import json
 
 import httpx
+from fastapi import HTTPException
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -23,7 +24,7 @@ from app.agents.providers import (
     load_provider_config,
 )
 from app.agents.providers.openai_compatible import OpenAICompatibleProvider
-from app.api.routes.planning import get_llm_provider
+from app.api.routes.planning import get_llm_provider, get_planning_provider
 from app.api.routes.providers import connection_state, get_status_provider
 from app.capabilities.registry import build_default_capability_registry
 from app.capabilities.resolver import CapabilityResolutionError
@@ -68,11 +69,35 @@ def test_default_configuration_selects_mock():
     assert config.credential_configured is False
 
 
-@pytest.mark.parametrize("mode", ["json_schema", "json_object"])
-def test_structured_output_mode_is_explicit_and_closed(mode):
+def test_product_mode_without_provider_is_not_silent_mock():
+    config = load_provider_config({}, allow_default_mock=False)
+
+    assert config.provider == "unconfigured"
+    assert config.configured is False
+    assert config.credential_configured is False
+    with pytest.raises(ProviderError) as exc:
+        build_provider(config)
+    assert exc.value.category is ProviderErrorCategory.NOT_CONFIGURED
+
+
+def test_product_planner_dependency_fails_closed_without_provider(monkeypatch):
+    monkeypatch.delenv("AGENTFORGE_LLM_PROVIDER", raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        get_llm_provider()
+
+    assert exc.value.status_code == 503
+    assert "NOT_CONFIGURED" in str(exc.value.detail)
+
+
+@pytest.mark.parametrize(
+    ("mode", "effective_mode"),
+    [("json_schema", "json_object"), ("json_object", "json_object")],
+)
+def test_structured_output_mode_is_explicit_and_closed(mode, effective_mode):
     config = load_provider_config({**real_env(), "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE": mode})
 
-    assert config.structured_output_mode.value == mode
+    assert config.structured_output_mode.value == effective_mode
 
 
 def test_unknown_structured_output_mode_fails_closed_without_secret():
@@ -197,6 +222,43 @@ def test_mock_provider_is_deterministic_and_network_free():
     assert SECRET not in json.dumps(dict(first.payload))
 
 
+def test_release_readiness_mock_plan_covers_authorized_evidence_dimensions(
+    db_session,
+):
+    task = create_project_task(
+        db_session,
+        title="Release readiness planning",
+        goal="全面分析项目是否适合发布，找出主要风险并给出证据。",
+    )
+
+    plan = PlannerAgent(db_session, MockLLMProvider()).create_plan(
+        task.id, context={"analysis_profile": "release_readiness"}
+    )
+
+    assert {
+        step["capability_id"] for step in plan.plan_json["steps"]
+    } == {"repository_state", "project_metadata", "test_verification"}
+
+
+def test_release_readiness_mock_plan_never_invents_unauthorized_capabilities():
+    provider = MockLLMProvider()
+
+    response = provider.generate_plan(
+        LLMRequest(
+            prompt="bounded",
+            context={
+                "analysis_profile": "release_readiness",
+                "authorized_capability_ids": ["repository_state"],
+            },
+            output_schema={},
+        )
+    )
+
+    assert [step["capability_id"] for step in response.payload["steps"]] == [
+        "repository_state"
+    ]
+
+
 def valid_plan() -> dict:
     return {
         "schema_version": 2,
@@ -273,9 +335,84 @@ def test_real_provider_sends_bounded_authenticated_structured_request():
     assert request.headers["authorization"] == f"Bearer {SECRET}"
     assert body["model"] == "example-model"
     assert body["max_tokens"] == 1200
-    assert body["response_format"]["type"] == "json_schema"
+    assert body["response_format"] == {"type": "json_object"}
     assert body["thinking"] == {"type": "disabled"}
     assert "temperature" not in body
+
+
+def test_deepseek_planner_uses_json_object_for_legacy_effective_mode():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return chat_response(valid_plan())
+
+    config = replace(
+        real_config(),
+        model="deepseek-v4-flash",
+        structured_output_mode=StructuredOutputMode.JSON_SCHEMA,
+    )
+    provider = OpenAICompatibleProvider(
+        config, transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+
+    response = provider.generate_plan(plan_request())
+
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in json.dumps(captured["body"])
+    assert response.diagnostics["request_facts"] == {
+        "http_method": "POST",
+        "endpoint_path": "/v1/chat/completions",
+        "model": "deepseek-v4-flash",
+        "structured_output_mode": "json_object",
+        "response_format_type": "json_object",
+        "thinking": "disabled",
+        "max_tokens": 1200,
+        "temperature_present": False,
+        "tool_fields_present": False,
+        "top_level_fields": [
+            "max_tokens",
+            "messages",
+            "model",
+            "response_format",
+            "thinking",
+        ],
+        "message_roles": ["system", "user"],
+        "json_instruction_present": True,
+    }
+
+
+def test_real_provider_uses_one_effective_mode_for_plan_replan_analyst_and_connection():
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        return chat_response({"status": "ok"})
+
+    config = replace(
+        real_config(),
+        model="deepseek-v4-flash",
+        structured_output_mode=StructuredOutputMode.JSON_SCHEMA,
+    )
+    provider = OpenAICompatibleProvider(
+        config, transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+    request = plan_request()
+
+    provider.generate_plan(request)
+    provider.generate_replan(request)
+    provider.generate_analyst(request)
+    provider.test_connection()
+
+    assert len(captured) == 4
+    assert [body["response_format"] for body in captured] == [
+        {"type": "json_object"},
+        {"type": "json_object"},
+        {"type": "json_object"},
+        {"type": "json_object"},
+    ]
+    assert all("json_schema" not in json.dumps(body) for body in captured)
 
 
 def test_real_provider_sends_json_object_request_without_schema_fields():
@@ -299,7 +436,7 @@ def test_real_provider_sends_json_object_request_without_schema_fields():
 @pytest.mark.parametrize(
     ("status", "category", "attempts"),
     [
-        (400, ProviderErrorCategory.INVALID_RESPONSE, 1),
+        (400, ProviderErrorCategory.INVALID_CONFIGURATION, 1),
         (401, ProviderErrorCategory.AUTHENTICATION_FAILED, 1),
         (403, ProviderErrorCategory.AUTHENTICATION_FAILED, 1),
         (408, ProviderErrorCategory.TIMEOUT, 3),
@@ -328,11 +465,47 @@ def test_status_mapping_and_retry_bounds(status, category, attempts):
     assert SECRET not in str(exc.value)
 
 
+def test_http_400_preserves_only_safe_upstream_error_facts():
+    provider = OpenAICompatibleProvider(
+        replace(
+            real_config(),
+            model="deepseek-v4-flash",
+            structured_output_mode=StructuredOutputMode.JSON_SCHEMA,
+        ),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": (
+                            "Invalid response_format json_schema; "
+                            f"private={SECRET}"
+                        ),
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        ),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.generate_plan(plan_request())
+
+    diagnostics = exc.value.diagnostics
+    assert diagnostics["upstream_error_category"] == "unsupported_response_format"
+    assert diagnostics["upstream_error_message"] == (
+        "Provider rejected the response_format parameter"
+    )
+    assert diagnostics["request_facts"]["response_format_type"] == "json_object"
+    assert SECRET not in repr(diagnostics)
+
+
 @pytest.mark.parametrize(
     ("exception", "category"),
     [
         (httpx.TimeoutException("unsafe", request=httpx.Request("POST", "https://x")), ProviderErrorCategory.TIMEOUT),
-        (httpx.ConnectError("unsafe", request=httpx.Request("POST", "https://x")), ProviderErrorCategory.NETWORK_ERROR),
+        (httpx.ConnectError("unsafe", request=httpx.Request("POST", "https://x")), ProviderErrorCategory.ENDPOINT_UNREACHABLE),
     ],
 )
 def test_transient_transport_errors_retry_three_times(exception, category):
@@ -572,6 +745,126 @@ def test_connection_check_uses_fixed_non_plan_payload_and_bounded_budget(mode):
     serialized = json.dumps(captured["body"])
     assert "repository" not in serialized.lower()
     assert "business" not in serialized.lower()
+
+
+def test_connection_check_uses_json_object_and_explicit_json_prompt():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return raw_chat_response(json.dumps({"status": "ok"}), reasoning_content=SECRET)
+
+    provider = OpenAICompatibleProvider(
+        real_config(), transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+
+    response = provider.test_connection()
+
+    assert response.payload == {"status": "ok"}
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert "json" in json.dumps(captured["body"]).lower()
+    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert response.diagnostics["reasoning_content_present"] is True
+    assert SECRET not in repr(response)
+
+
+def test_connection_check_accepts_additional_openai_compatible_fields():
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-safe",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "example-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"status":"ok"}',
+                            "reasoning_content": SECRET,
+                            "annotations": [],
+                        },
+                        "finish_reason": "stop",
+                        "logprobs": None,
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                "system_fingerprint": "safe-fingerprint",
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        real_config(), transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+
+    response = provider.test_connection()
+
+    assert response.payload == {"status": "ok"}
+    assert response.diagnostics["reasoning_content_present"] is True
+    assert SECRET not in repr(response)
+
+
+def test_connection_check_empty_content_is_a_clean_invalid_response():
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(lambda _: raw_chat_response("", reasoning_content=SECRET)),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.test_connection()
+
+    assert exc.value.category.value == "INVALID_RESPONSE"
+    assert exc.value.diagnostics["failure_stage"] == "content_empty"
+    assert SECRET not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        (400, {"error": {"message": "invalid request"}}, "INVALID_CONFIGURATION"),
+        (402, {"error": {"message": "insufficient balance"}}, "INSUFFICIENT_BALANCE"),
+        (404, {"error": {"message": "model is unavailable"}}, "MODEL_UNAVAILABLE"),
+    ],
+)
+def test_connection_statuses_are_classified_without_exposing_error_body(
+    status, body, expected
+):
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(status, json=body)),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.test_connection()
+
+    assert exc.value.category.value == expected
+    assert "insufficient balance" not in str(exc.value).lower()
+    assert "model is unavailable" not in repr(exc.value.diagnostics).lower()
+
+
+def test_connection_endpoint_failure_has_a_specific_safe_category():
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(
+            lambda _: (_ for _ in ()).throw(
+                httpx.ConnectError(
+                    "private transport detail",
+                    request=httpx.Request("POST", "https://provider.example"),
+                )
+            )
+        ),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.test_connection()
+
+    assert exc.value.category.value == "ENDPOINT_UNREACHABLE"
+    assert "private transport detail" not in str(exc.value)
 
 
 @pytest.mark.parametrize("acknowledgement", [{}, {"status": "error"}])
@@ -825,6 +1118,31 @@ def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
     assert SECRET not in serialized
 
 
+def test_unexpected_provider_exception_marks_task_failed(db_session):
+    task = create_project_task(
+        db_session, title="Unexpected provider failure", goal="Check release"
+    )
+
+    class UnexpectedProvider(FakeProvider):
+        def generate_plan(self, request: LLMRequest) -> LLMResponse:
+            self.plan_calls += 1
+            raise RuntimeError("private transport detail must not be persisted")
+
+    with pytest.raises(RuntimeError):
+        PlannerAgent(db_session, UnexpectedProvider()).create_plan(task.id)
+
+    assert TaskService(db_session).get_task(task.id).status == TaskStatus.FAILED
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 0
+    failed_event = next(
+        event
+        for event in db_session.query(AuditEventRecord).filter_by(task_id=task.id).all()
+        if event.event_type == "LLM_PLAN_FAILED"
+    )
+    failed_payload = json.loads(failed_event.payload_summary)
+    assert failed_payload["failure_category"] == "PROVIDER_ERROR"
+    assert "private transport detail" not in failed_event.payload_summary
+
+
 def test_plan_validation_failure_audits_bounded_validation_metadata(db_session):
     task = create_project_task(
         db_session, title="Validation diagnostics", goal="Check release"
@@ -857,7 +1175,7 @@ def test_planning_api_uses_injected_provider_without_silent_fallback(db_session)
             safe_message="Provider unavailable",
         )
     )
-    app.dependency_overrides[get_llm_provider] = lambda: failing
+    app.dependency_overrides[get_planning_provider] = lambda: failing
     try:
         with TestClient(app) as client:
             project_id = project_fixture(db_session).id
@@ -874,6 +1192,41 @@ def test_planning_api_uses_injected_provider_without_silent_fallback(db_session)
     assert failing.plan_calls == 1
     with SessionLocal() as session:
         assert TaskService(session).get_task(task["id"]).status == TaskStatus.FAILED
+
+
+def test_planning_provider_preflight_failure_is_persisted_as_failed_task(
+    monkeypatch, db_session
+):
+    for name in (
+        "AGENTFORGE_LLM_PROVIDER",
+        "AGENTFORGE_LLM_BASE_URL",
+        "AGENTFORGE_LLM_MODEL",
+        "AGENTFORGE_LLM_API_KEY",
+        "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with TestClient(app) as client:
+        project_id = project_fixture(db_session).id
+        task = client.post(
+            "/tasks",
+            json={"title": "Preflight failure", "goal": "Check", "project_id": project_id},
+        ).json()
+        response = client.post(f"/tasks/{task['id']}/plan", json={})
+
+    assert response.status_code == 503
+    with SessionLocal() as session:
+        persisted = TaskService(session).get_task(task["id"])
+        assert persisted.status == TaskStatus.FAILED
+        event_types = [
+            event.event_type
+            for event in session.query(AuditEventRecord)
+            .filter_by(task_id=task["id"])
+            .order_by(AuditEventRecord.created_at)
+            .all()
+        ]
+        assert "LLM_PLAN_REQUESTED" in event_types
+        assert "LLM_PLAN_FAILED" in event_types
 
 
 def set_real_environment(monkeypatch, *, api_key: str = SECRET):
@@ -906,7 +1259,7 @@ def test_provider_status_exposes_no_credential_material(monkeypatch):
         "configured": True,
         "model": "example-model",
         "credential_configured": True,
-        "structured_output_mode": "json_schema",
+        "structured_output_mode": "json_object",
         "connection_status": "not tested",
         "failure_category": None,
     }

@@ -12,13 +12,18 @@ class StructuredOutputMode(StrEnum):
 
 class ProviderErrorCategory(StrEnum):
     NOT_CONFIGURED = "NOT_CONFIGURED"
+    INVALID_CONFIGURATION = "INVALID_CONFIGURATION"
     AUTHENTICATION_FAILED = "AUTHENTICATION_FAILED"
+    INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    ENDPOINT_UNREACHABLE = "ENDPOINT_UNREACHABLE"
     RATE_LIMITED = "RATE_LIMITED"
     TIMEOUT = "TIMEOUT"
     NETWORK_ERROR = "NETWORK_ERROR"
     UPSTREAM_SERVER_ERROR = "UPSTREAM_SERVER_ERROR"
     INVALID_RESPONSE = "INVALID_RESPONSE"
     RESPONSE_TOO_LARGE = "RESPONSE_TOO_LARGE"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
 
 
 class ProviderError(RuntimeError):
@@ -26,13 +31,18 @@ class ProviderError(RuntimeError):
 
     _SAFE_MESSAGES = {
         ProviderErrorCategory.NOT_CONFIGURED: "LLM provider is not configured",
+        ProviderErrorCategory.INVALID_CONFIGURATION: "LLM provider configuration is invalid",
         ProviderErrorCategory.AUTHENTICATION_FAILED: "LLM provider authentication failed",
+        ProviderErrorCategory.INSUFFICIENT_BALANCE: "LLM provider balance is insufficient",
+        ProviderErrorCategory.MODEL_UNAVAILABLE: "LLM provider model is unavailable",
+        ProviderErrorCategory.ENDPOINT_UNREACHABLE: "LLM provider endpoint is unreachable",
         ProviderErrorCategory.RATE_LIMITED: "LLM provider rate limit reached",
         ProviderErrorCategory.TIMEOUT: "LLM provider request timed out",
         ProviderErrorCategory.NETWORK_ERROR: "LLM provider network request failed",
         ProviderErrorCategory.UPSTREAM_SERVER_ERROR: "LLM provider server request failed",
         ProviderErrorCategory.INVALID_RESPONSE: "LLM provider returned an invalid response",
         ProviderErrorCategory.RESPONSE_TOO_LARGE: "LLM provider response exceeded the size limit",
+        ProviderErrorCategory.PROVIDER_ERROR: "LLM provider request failed",
     }
 
     def __init__(
@@ -61,6 +71,7 @@ class LLMRequest:
     prompt: str
     context: Mapping[str, Any]
     output_schema: Mapping[str, Any]
+    system_instruction: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +95,9 @@ class LLMProvider(Protocol):
 
     def generate_replan(self, request: LLMRequest) -> LLMResponse:
         """Return untrusted capability-only remaining-plan data."""
+
+    def generate_analyst(self, request: LLMRequest) -> LLMResponse:
+        """Return untrusted evidence-grounded synthesis data."""
 
     def test_connection(self) -> LLMResponse:
         """Perform one bounded, non-plan compatibility check."""

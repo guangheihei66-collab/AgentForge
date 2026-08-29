@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from ...capabilities.registry import CapabilityRegistry
+from ...contracts.analysis import RELEASE_READINESS_PROFILE
 
 
 MAX_PLANNING_CONTEXT_BYTES = 4096
@@ -42,6 +43,14 @@ def build_planning_prompt(
     catalog_json = json.dumps(
         catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+    profile_instruction = ""
+    if context and context.get("analysis_profile") == RELEASE_READINESS_PROFILE:
+        profile_instruction = (
+            " This is the release-readiness analysis profile. Cover each relevant "
+            "capability from the catalog among repository_state, project_metadata, "
+            "and test_verification so the downstream report can distinguish facts "
+            "from unknowns. Never add a capability absent from the catalog."
+        )
     return (
         "Create a minimal JSON capability plan for the user goal. Return only "
         "schema_version, a concise summary, and 1-20 steps containing only "
@@ -50,6 +59,7 @@ def build_planning_prompt(
         "step_id must be a non-empty string. "
         "Never select a concrete tool, command, permission, approval, workspace, "
         "executable path, or filesystem path. Do not provide hidden reasoning.\n"
+        f"{profile_instruction}\n"
         "For project_metadata steps, relative_path must be one of the paths in "
         "the application-owned metadata_manifest. Never invent a metadata path.\n"
         f"Capability catalog: {catalog_json}\n"

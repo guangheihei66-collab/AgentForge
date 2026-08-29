@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ...approvals.service import ApprovalError, ApprovalService
+from ...analyst.service import AnalystService
 from ...domain.states.task_state import TaskStatus
 from ...schemas.operations import (
     ApprovalQueueRead,
     ReportRead,
+    AnalystSynthesisRead,
     TaskDetailRead,
     TaskSummaryRead,
 )
@@ -144,4 +146,7 @@ def task_report(task_id: str, db: Session = Depends(get_db)) -> ReportRead:
         evidence=[{"id": e.id, "summary": e.summary, "artifact_path": e.artifact_path, "content_hash": e.content_hash, "created_at": e.created_at} for e in evidence],
         audit_count=audit_count,
         execution_count=len(executions),
+        analyst=AnalystSynthesisRead.model_validate(
+            AnalystService(db, None).get_read_model(task_id).to_dict()
+        ),
     )

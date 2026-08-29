@@ -1,28 +1,36 @@
 import json
+import os
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..analyst.read_model import AnalystReadModel, read_analyst_report
+from ..analyst.storage import AnalystArtifactStore
 from ..agents.providers.config import load_provider_config
 from ..identity import get_runtime_identity
-from ..schemas.diagnostics import CommandProvenanceRead, DiagnosticsRead, ExecutionCountsRead, HealthRead, RecentTaskRead, RuntimeIdentityRead
+from ..schemas.diagnostics import AnalystDiagnosticsRead, CommandProvenanceRead, DiagnosticsRead, ExecutionCountsRead, HealthRead, RecentTaskRead, RuntimeIdentityRead
 from ..storage.orm import ApprovalRecord, AuditEventRecord, EvidenceRecord, PlanRecord, TaskRecord, ToolExecutionRecord
 from .health import classify_overall
 
 
 def _provider() -> tuple[dict[str, object], str]:
     try:
-        config = load_provider_config()
+        config = load_provider_config(allow_default_mock=False)
         from ..api.routes.providers import connection_state
 
         snapshot = connection_state.get()
         if not config.configured:
-            return {"provider": config.provider, "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": "NOT_CONFIGURED"}, "DEGRADED"
+            return {"provider": config.provider, "model": config.model or "not-configured", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "configuration": "NOT_CONFIGURED", "connection": "NOT_CONFIGURED"}, "DEGRADED"
+        if config.provider == "mock":
+            connection = {"success": "SUCCESS", "failed": "FAILED"}.get(snapshot.status, "UNKNOWN")
+            state = "HEALTHY" if snapshot.status == "success" else ("DEGRADED" if snapshot.status == "failed" else "UNKNOWN")
+            return {"provider": "mock", "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "configuration": "CONFIGURED", "connection": connection}, state
         connection = {"success": "SUCCESS", "failed": "FAILED"}.get(snapshot.status, "UNKNOWN")
         state = "HEALTHY" if snapshot.status == "success" else ("DEGRADED" if snapshot.status == "failed" else "UNKNOWN")
-        return {"provider": config.provider, "model": config.model or "deterministic-mock", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "connection": connection}, state
+        return {"provider": config.provider, "model": config.model or "not-configured", "structured_output_mode": config.structured_output_mode.value, "credential_configured": config.credential_configured, "configuration": "CONFIGURED", "connection": connection}, state
     except Exception:
-        return {"provider": "UNKNOWN", "model": "UNKNOWN", "structured_output_mode": "UNKNOWN", "credential_configured": False, "connection": "UNKNOWN"}, "UNKNOWN"
+        return {"provider": "UNKNOWN", "model": "UNKNOWN", "structured_output_mode": "UNKNOWN", "credential_configured": False, "configuration": "UNKNOWN", "connection": "UNKNOWN"}, "UNKNOWN"
 
 
 _COMMAND_RECEIVED_EVENTS = {
@@ -34,6 +42,7 @@ _INITIATION_EVENTS = {
     "EXECUTION_INITIATION_STARTED",
     "EXECUTION_INITIATION_FAILED",
 }
+_RUNTIME_FAILURE_EVENTS = {"RUNTIME_EXECUTION_FAILED", "REPLAN_FAILED"}
 
 
 def _payload(event: AuditEventRecord) -> dict[str, object]:
@@ -91,7 +100,11 @@ def _command_provenance(
                 initiation = "STARTED"
             elif initiation == "NOT_REQUESTED":
                 initiation = "REQUESTED"
-        if event.event_type in {"APPROVAL_COMMAND_FAILED", "EXECUTION_INITIATION_FAILED"}:
+        if event.event_type in {
+            "APPROVAL_COMMAND_FAILED",
+            "EXECUTION_INITIATION_FAILED",
+            *_RUNTIME_FAILURE_EVENTS,
+        }:
             failure_category = _text(payload.get("error_category"))
 
     last = window[-1]
@@ -116,6 +129,67 @@ def _command_provenance(
     )
 
 
+def _analyst_snapshot(
+    session: Session, task_id: str, *, provider_configured: bool
+) -> AnalystDiagnosticsRead:
+    data_root = Path(
+        os.getenv("AGENTFORGE_DATA_ROOT", r"D:\AgentProjectData\AgentForge")
+    )
+    read_model: AnalystReadModel = read_analyst_report(
+        session,
+        task_id=task_id,
+        artifact_store=AnalystArtifactStore(data_root),
+    )
+    synthesis_mode = "NOT_REQUESTED"
+    if read_model.status.value == "FAILED":
+        synthesis_mode = "FAILED"
+    elif read_model.status.value == "SUCCEEDED":
+        synthesis_mode = "MOCK" if read_model.provider == "mock" else "REAL"
+    elif not provider_configured:
+        synthesis_mode = "NOT_CONFIGURED"
+    return AnalystDiagnosticsRead(
+        status=read_model.status.value,
+        synthesis_mode=synthesis_mode,
+        task_id=task_id,
+        plan_id=read_model.plan_id,
+        plan_version=read_model.plan_version,
+        provider=read_model.provider,
+        model=read_model.model,
+        artifact_path=read_model.artifact_path,
+        content_hash=read_model.content_hash,
+        generated_at=read_model.generated_at,
+        failure_category=read_model.failure_category,
+    )
+
+
+def _planner_metadata(
+    session: Session, task_id: str, provider: dict[str, object]
+) -> tuple[str | None, str | None]:
+    events = (
+        session.query(AuditEventRecord)
+        .filter(
+            AuditEventRecord.task_id == task_id,
+            AuditEventRecord.event_type.in_(
+                {"LLM_PLAN_REQUESTED", "LLM_PLAN_SUCCEEDED", "LLM_PLAN_FAILED"}
+            ),
+        )
+        .order_by(AuditEventRecord.created_at.desc(), AuditEventRecord.id.desc())
+        .all()
+    )
+    if events:
+        payload = _payload(events[0])
+        event_provider = _text(payload.get("provider"))
+        event_model = _text(payload.get("model"))
+        if event_provider or event_model:
+            return event_provider, event_model
+    configured_provider = provider.get("provider")
+    configured_model = provider.get("model")
+    return (
+        configured_provider if isinstance(configured_provider, str) else None,
+        configured_model if isinstance(configured_model, str) else None,
+    )
+
+
 def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
     identity = get_runtime_identity()
     provider, provider_state = _provider()
@@ -127,7 +201,14 @@ def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
     backend_state = "HEALTHY"
     recent = session.scalars(select(TaskRecord).order_by(TaskRecord.updated_at.desc()).limit(1)).first()
     recent_task = None
+    provider_configured = provider.get("configuration") == "CONFIGURED"
+    analyst = AnalystDiagnosticsRead(
+        status="NOT_REQUESTED",
+        synthesis_mode="NOT_REQUESTED" if provider_configured else "NOT_CONFIGURED",
+    )
     command_provenance = None
+    planner_provider = None
+    planner_model = None
     if recent:
         plan = session.scalars(select(PlanRecord).where(PlanRecord.task_id == recent.id).order_by(PlanRecord.version.desc()).limit(1)).first()
         approval = session.scalars(select(ApprovalRecord).where(ApprovalRecord.task_id == recent.id).order_by(ApprovalRecord.created_at.desc()).limit(1)).first()
@@ -136,5 +217,9 @@ def diagnostics_snapshot(session: Session) -> DiagnosticsRead:
         failed = execution_counts.get("FAILED", 0)
         rejected = execution_counts.get("REJECTED", 0)
         recent_task = RecentTaskRead(id=recent.id, state=recent.status, plan_version=plan.version if plan else None, approval=approval.decision if approval else None, executions=ExecutionCountsRead(total=sum(execution_counts.values()), success=success, failed=failed, rejected=rejected), evidence_count=session.scalar(select(func.count()).select_from(EvidenceRecord).where(EvidenceRecord.task_id == recent.id)) or 0, observation_count=session.scalar(select(func.count()).select_from(AuditEventRecord).where(AuditEventRecord.task_id == recent.id, AuditEventRecord.event_type.ilike("%observation%"))) or 0, replan_count=session.scalar(select(func.count()).select_from(AuditEventRecord).where(AuditEventRecord.task_id == recent.id, AuditEventRecord.event_type.ilike("%replan%"))) or 0)
+        analyst = _analyst_snapshot(
+            session, recent.id, provider_configured=provider_configured
+        )
+        planner_provider, planner_model = _planner_metadata(session, recent.id, provider)
         command_provenance = _command_provenance(session, recent)
-    return DiagnosticsRead(identity=RuntimeIdentityRead(**identity.__dict__) if hasattr(identity, "__dict__") else RuntimeIdentityRead(product=identity.product, version=identity.version, revision=identity.revision, environment=identity.environment), health=HealthRead(overall=classify_overall(backend=backend_state, database=database_state, provider=provider_state), backend=backend_state, database=database_state, provider=provider_state), provider=provider, recent_task=recent_task, command_provenance=command_provenance, recent_errors=[])
+    return DiagnosticsRead(identity=RuntimeIdentityRead(**identity.__dict__) if hasattr(identity, "__dict__") else RuntimeIdentityRead(product=identity.product, version=identity.version, revision=identity.revision, environment=identity.environment), health=HealthRead(overall=classify_overall(backend=backend_state, database=database_state, provider=provider_state), backend=backend_state, database=database_state, provider=provider_state), provider=provider, recent_task=recent_task, analyst=analyst, planner_provider=planner_provider, planner_model=planner_model, analyst_provider=analyst.provider, analyst_model=analyst.model, analyst_synthesis_mode=analyst.synthesis_mode, command_provenance=command_provenance, recent_errors=[])

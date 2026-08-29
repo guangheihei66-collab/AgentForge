@@ -79,9 +79,23 @@ def _validated_base_url(value: str) -> tuple[str, str | None]:
     return "", "Base URL must use HTTPS except on loopback"
 
 
-def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderConfig:
+def load_provider_config(
+    environ: Mapping[str, str] | None = None,
+    *,
+    allow_default_mock: bool = True,
+) -> ProviderConfig:
     values = os.environ if environ is None else environ
-    provider = values.get("AGENTFORGE_LLM_PROVIDER", "mock").strip().lower()
+    raw_provider = values.get("AGENTFORGE_LLM_PROVIDER")
+    if raw_provider is None or not raw_provider.strip():
+        if allow_default_mock:
+            provider = "mock"
+        else:
+            return ProviderConfig(
+                provider="unconfigured",
+                validation_error="AGENTFORGE_LLM_PROVIDER is required",
+            )
+    else:
+        provider = raw_provider.strip().lower()
     if provider not in {"mock", "openai-compatible"}:
         raise ProviderError(
             ProviderErrorCategory.NOT_CONFIGURED,
@@ -100,6 +114,16 @@ def load_provider_config(environ: Mapping[str, str] | None = None) -> ProviderCo
     except ValueError:
         structured_output_mode = StructuredOutputMode.JSON_SCHEMA
         mode_error = "Structured output mode is invalid"
+    if (
+        provider == "openai-compatible"
+        and structured_output_mode is StructuredOutputMode.JSON_SCHEMA
+    ):
+        # The OpenAI-compatible Chat Completions contract used by AgentForge
+        # supports JSON Output, while the legacy provider-side json_schema
+        # envelope is rejected by DeepSeek.  Keep local Pydantic validation as
+        # the schema authority and normalize the transport mode here so status,
+        # Planner, Replanner, Analyst, and connection checks agree.
+        structured_output_mode = StructuredOutputMode.JSON_OBJECT
     if provider == "mock":
         error = timeout_error or token_error or mode_error
         return ProviderConfig(

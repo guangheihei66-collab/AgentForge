@@ -4,13 +4,19 @@
 
 Verify whether Release v2.0 is ready for release.
 
-All records created by the seed script are synthetic and stored under `D:\AgentProjectData\AgentForge\`.
+All records created by the explicit seed script are synthetic and stored under `D:\AgentProjectData\AgentForge\`. Normal launcher startup never runs that script.
 
 ## Start
 
 1. Double-click `Start-AgentForge.bat`.
 2. Confirm the browser opens at `http://localhost:5173`.
 3. Confirm the backend status is available at `http://127.0.0.1:8000/health`.
+
+## Optional synthetic fixture preparation
+
+For the seeded dashboard variant, run `scripts/seed_demo.py` explicitly from
+the approved backend environment before starting the launcher. This step is
+deliberate demo preparation and is not part of one-click startup.
 
 ## Demonstration sequence
 

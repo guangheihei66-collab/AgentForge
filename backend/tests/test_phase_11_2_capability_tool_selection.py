@@ -447,7 +447,11 @@ def test_pending_approval_api_exposes_what_will_actually_execute(db_session):
 
     assert created.status_code == 201
     item = next(row for row in pending.json() if row["task_id"] == task["id"])
-    snapshot = item["resolved_snapshot"]["steps"][0]
+    snapshot = next(
+        row
+        for row in item["resolved_snapshot"]["steps"]
+        if row["capability_id"] == "repository_state"
+    )
     assert snapshot["capability_id"] == "repository_state"
     assert snapshot["resolved_tool_id"] == "git_read"
     assert snapshot["normalized_parameters"] == {}

@@ -46,4 +46,28 @@ describe('authoritative Agent timeline projection', () => {
     expect(entries.map(entry => entry.kind)).toContain('APPROVED')
     expect(entries.map(entry => entry.kind)).toContain('COMPLETED')
   })
+
+  it('projects observation JSON into a bounded human summary with collapsed technical data', () => {
+    const observationPayload = JSON.stringify({
+      observation_id: 'observation-123',
+      step_id: 'step-1',
+      capability_id: 'repository_state',
+      status: 'SUCCESS',
+      decision: 'COMPLETE',
+      result_summary: 'Working tree is clean.',
+      evidence_refs: ['evidence-1'],
+    })
+    const entries = buildAgentTimeline({
+      detail: {
+        ...detail,
+        audit: [{ ...detail.audit[2], payload_summary: observationPayload }],
+      },
+      report,
+    })
+    const observation = entries.find(entry => entry.kind === 'OBSERVATION_RECORDED')
+
+    expect(observation?.summary).toContain('COMPLETE')
+    expect(observation?.summary).not.toContain('observation_id')
+    expect(observation?.raw).toMatchObject({ observation_id: 'observation-123' })
+  })
 })

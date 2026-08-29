@@ -30,4 +30,11 @@ describe('Dashboard localization', () => {
     expect(screen.getAllByText('RAW TASK TITLE').length).toBeGreaterThan(0)
     expect(screen.getByText('raw-model-v1')).toBeInTheDocument()
   })
+
+  it('does not present an unconfigured provider as Mock', () => {
+    render(<Dashboard tasks={[task]} approvals={[]} providerStatus={{ provider: 'unconfigured', model: 'not-configured', configured: false, credential_configured: false, connection_status: 'failed' }} testingProvider={false} onTestProvider={() => undefined} onTask={() => undefined} onApprovals={() => undefined} />)
+
+    expect(screen.getAllByText('Real AI provider is not configured')).toHaveLength(2)
+    expect(screen.queryByText('Mock')).not.toBeInTheDocument()
+  })
 })

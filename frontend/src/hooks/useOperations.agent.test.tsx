@@ -38,11 +38,23 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     const { result } = renderHook(() => useOperations())
     await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL') })
     expect(apiMock.createTask).toHaveBeenCalledWith({ project_id: 'project-1', title: 'Repository Analyst Agent', goal: 'RAW GOAL' })
-    expect(apiMock.createPlan).toHaveBeenCalledWith('task-1')
+    expect(apiMock.createPlan).toHaveBeenCalledWith('task-1', { source: 'agent', analysis_profile: 'release_readiness' })
     expect(apiMock.createApproval).toHaveBeenCalledWith('task-1', 'plan-1', 1)
     expect(apiMock.createPlan.mock.invocationCallOrder[0]).toBeGreaterThan(apiMock.createTask.mock.invocationCallOrder[0])
     expect(apiMock.createApproval.mock.invocationCallOrder[0]).toBeGreaterThan(apiMock.createPlan.mock.invocationCallOrder[0])
     expect(apiMock.executeTask).not.toHaveBeenCalled()
+  })
+
+  it('keeps provider status honest when the provider endpoint is unavailable', async () => {
+    apiMock.getProviderStatus.mockRejectedValueOnce(new Error('provider unavailable'))
+
+    const { result } = renderHook(() => useOperations())
+
+    await waitFor(() => expect(result.current.providerStatus).toMatchObject({
+      provider: 'unconfigured',
+      model: 'not-configured',
+      configured: false,
+    }))
   })
 
   it('does not let a polling refresh cancel Task creation before planning', async () => {
@@ -52,7 +64,7 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     let creation!: Promise<unknown>
     await act(async () => { creation = result.current.createAgentTask('project-1', 'RAW GOAL'); await Promise.resolve() })
     await act(async () => { void result.current.refresh(); await Promise.resolve(); releaseTask(task) })
-    await waitFor(() => expect(apiMock.createPlan).toHaveBeenCalledWith('task-1'))
+    await waitFor(() => expect(apiMock.createPlan).toHaveBeenCalledWith('task-1', { source: 'agent', analysis_profile: 'release_readiness' }))
     await act(async () => { await creation })
   })
 
@@ -74,10 +86,13 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
 
   it('does not create Approval or execute when planning fails', async () => {
     apiMock.createPlan.mockRejectedValueOnce(new Error('LLM planning failed: INVALID_RESPONSE'))
+    apiMock.getTaskDetail.mockResolvedValueOnce({ ...detail, task: { ...task, status: 'FAILED' }, plans: [], approvals: [] })
     const { result } = renderHook(() => useOperations())
     await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL').catch(() => undefined) })
     expect(apiMock.createApproval).not.toHaveBeenCalled()
     expect(apiMock.executeTask).not.toHaveBeenCalled()
+    expect(apiMock.getTaskDetail).toHaveBeenCalledWith('task-1')
+    expect(result.current.detail.task.status).toBe('FAILED')
     expect(result.current.agentError).toContain('INVALID_RESPONSE')
   })
 
@@ -92,6 +107,7 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
       plan_id: 'plan-1',
       plan_version: 1,
       actor: 'operator',
+      language: 'en-US',
     })
     expect(apiMock.executeTask).not.toHaveBeenCalled()
   })
@@ -105,7 +121,7 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
     await act(async () => { await result.current.approveAndExecuteAgentTask(queueItem) })
 
     expect(apiMock.approveAndExecuteTask).toHaveBeenCalledTimes(1)
-    expect(apiMock.approveAndExecuteTask).toHaveBeenCalledWith('task-1', { approval_id: 'approval-1', plan_id: 'plan-1', plan_version: 1, actor: 'operator' })
+    expect(apiMock.approveAndExecuteTask).toHaveBeenCalledWith('task-1', { approval_id: 'approval-1', plan_id: 'plan-1', plan_version: 1, actor: 'operator', language: 'en-US' })
     expect(apiMock.approve).not.toHaveBeenCalled()
     expect(apiMock.executeTask).not.toHaveBeenCalled()
   })

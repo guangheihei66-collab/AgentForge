@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ...agent_runtime import AgentRuntime, RuntimeExecutor
+from ...analyst.service import AnalystService
 from ...agents.orchestration.service import (
     AgentApprovalExecutionService,
     AgentExecutionInitiationError,
@@ -52,11 +53,12 @@ def _build_runtime(db: Session, task_id: str) -> AgentRuntime:
         validator,
         data_root / "artifacts" / task_id,
     )
-    provider = build_provider(load_provider_config())
+    provider = build_provider(load_provider_config(allow_default_mock=False))
     return AgentRuntime(
         db,
         RuntimeExecutor(gateway),
         replanning_service=ReplanningService(db, provider),
+        analyst_service=AnalystService(db, provider, data_root=data_root),
     )
 
 
@@ -91,6 +93,7 @@ def approve_and_execute_task(
             plan_id=payload.plan_id,
             plan_version=payload.plan_version,
             actor=payload.actor,
+            language=payload.language,
         )
         return _serialize_result(result)
     except LookupError as exc:

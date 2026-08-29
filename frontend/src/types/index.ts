@@ -32,6 +32,7 @@ export type ResolvedExecutionSnapshot = {
 export type PlanDocument = {
   schema_version: 2
   summary?: string
+  analysis_profile?: string | null
   steps: CapabilityPlanStep[]
   resolved_steps: ResolvedExecutionSnapshot[]
   project_authority: ProjectAuthority
@@ -89,8 +90,14 @@ export type CommandProvenance = {
 export type Diagnostics = {
   identity: { product: string; version: string; revision: string | null; environment: string }
   health: { overall: HealthState; backend: HealthState; database: HealthState; provider: HealthState }
-  provider: { provider: string; model: string; structured_output_mode: string; credential_configured: boolean; connection: string }
+  provider: { provider: string; model: string; structured_output_mode: string; credential_configured: boolean; configuration?: 'CONFIGURED' | 'NOT_CONFIGURED' | 'UNKNOWN'; connection: string }
   recent_task: { id: string; state: string; plan_version: number | null; approval: string | null; executions: { total: number; success: number; failed: number; rejected: number }; evidence_count: number; observation_count: number; replan_count: number } | null
+  planner_provider?: string | null
+  planner_model?: string | null
+  analyst_provider?: string | null
+  analyst_model?: string | null
+  analyst_synthesis_mode?: AnalystSynthesisMode
+  analyst?: { status: AnalystSynthesisStatus; synthesis_mode?: AnalystSynthesisMode; provider?: string | null; model?: string | null }
   command_provenance: CommandProvenance | null
   recent_errors: string[]
 }
@@ -108,6 +115,17 @@ export type Evidence = { id: string; summary: string; artifact_path?: string; co
 export type AuditEvent = { id: string; event_type: string; actor: string; payload_summary: string; correlation_id: string; created_at: string }
 export type TaskDetail = { task: TaskSummary; plans: Plan[]; approvals: Approval[]; executions: Execution[]; evidence: Evidence[]; audit: AuditEvent[] }
 export type ApprovalQueueItem = { id: string; approval_id?: string | null; task_id: string; task_title: string; plan_id: string; plan_version: number; decision: string; requested_by: string; created_at: string; plan_json: PlanDocument; resolved_snapshot: ApprovalSnapshot | null }
-export type AgentApprovalCommand = { approval_id: string; plan_id: string; plan_version: number; actor: string }
+export type AnalystOutputLanguage = 'en-US' | 'zh-CN'
+export type AgentApprovalCommand = { approval_id: string; plan_id: string; plan_version: number; actor: string; language?: AnalystOutputLanguage }
 export type RuntimeResult = { task_id: string; plan_id: string; plan_version: number; state: string; decision: string; completed_steps: number; observations: unknown[]; successor_plan_id?: string | null; successor_plan_version?: number | null; approval_id?: string | null }
-export type Report = { task: TaskSummary; readiness: 'PASS' | 'FAIL' | 'PENDING'; summary: string; completed_steps: number; failed_steps: number; rejected_steps: number; evidence: Evidence[]; audit_count: number; execution_count: number }
+export type AnalystSynthesisStatus = 'NOT_REQUESTED' | 'PENDING' | 'GENERATING' | 'SUCCEEDED' | 'FAILED'
+export type AnalystSynthesisMode = 'REAL' | 'MOCK' | 'FAILED' | 'NOT_REQUESTED' | 'NOT_CONFIGURED'
+export type AnalystEvidenceSufficiency = 'SUFFICIENT' | 'PARTIAL' | 'INSUFFICIENT'
+export type AnalystSeverity = 'BLOCKER' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO'
+export type AnalystOverallStatus = 'HEALTHY' | 'AT_RISK' | 'BLOCKED' | 'UNKNOWN'
+export type AnalystReleaseRecommendation = 'READY' | 'READY_WITH_CONDITIONS' | 'NOT_READY' | 'INSUFFICIENT_EVIDENCE'
+export type AnalystFinding = { id: string; title: string; severity: AnalystSeverity; category: string; statement: string; rationale: string; evidence_refs: string[]; recommended_action: string }
+export type AnalystNextAction = { priority: number; action: string; rationale: string; evidence_refs: string[] }
+export type AnalystReportDocument = { schema_version: 1; task_id: string; plan_id: string; plan_version: number; provider: string; model: string; generated_at: string; language?: AnalystOutputLanguage; summary: string; overall_status: AnalystOverallStatus; release_recommendation: AnalystReleaseRecommendation; findings: AnalystFinding[]; next_actions: AnalystNextAction[]; limitations: string[]; evidence_coverage: { available_count: number; referenced_count: number; truncated: boolean; sufficiency?: AnalystEvidenceSufficiency; notes: string[] } }
+export type AnalystSynthesis = { status: AnalystSynthesisStatus; report: AnalystReportDocument | null; failure_category: string | null; provider: string | null; model: string | null; plan_id: string | null; plan_version: number | null; artifact_path: string | null; content_hash: string | null; generated_at: string | null }
+export type Report = { task: TaskSummary; readiness: 'PASS' | 'FAIL' | 'PENDING'; summary: string; completed_steps: number; failed_steps: number; rejected_steps: number; evidence: Evidence[]; audit_count: number; execution_count: number; analyst?: AnalystSynthesis }

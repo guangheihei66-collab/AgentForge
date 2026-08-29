@@ -8,7 +8,7 @@ from ..agents.providers.base import ProviderErrorCategory
 
 
 class ProviderStatusRead(BaseModel):
-    provider: Literal["mock", "openai-compatible"]
+    provider: Literal["mock", "openai-compatible", "unconfigured"]
     configured: bool
     model: str
     credential_configured: bool

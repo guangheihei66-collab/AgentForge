@@ -1,7 +1,9 @@
 """Predefined test profiles; no arbitrary command input is accepted."""
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 from .models import ToolDefinition
@@ -46,6 +48,7 @@ class TestTool:
             timeout=60,
             check=False,
             shell=False,
+            env=self._isolated_test_environment(workspace),
         )
         stdout = (completed.stdout or "")[-20_000:]
         stderr = (completed.stderr or "")[-20_000:]
@@ -56,6 +59,34 @@ class TestTool:
             "stdout": stdout,
             "stderr": stderr,
         }
+
+    @staticmethod
+    def _isolated_test_environment(workspace: str) -> dict[str, str]:
+        """Run predefined profiles independently of the product process.
+
+        The test child must use the source checkout it is verifying and the
+        deterministic Mock provider.  In particular, a launcher-provided real
+        provider or production database URL must never cross this boundary.
+        Process-local TEMP/TMP and cache settings are intentionally preserved.
+        """
+
+        environment = dict(os.environ)
+        for name in (
+            "AGENTFORGE_LLM_BASE_URL",
+            "AGENTFORGE_LLM_MODEL",
+            "AGENTFORGE_LLM_API_KEY",
+            "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE",
+            "AGENTFORGE_LLM_TIMEOUT_SECONDS",
+            "AGENTFORGE_LLM_MAX_OUTPUT_TOKENS",
+        ):
+            environment.pop(name, None)
+        environment["AGENTFORGE_LLM_PROVIDER"] = "mock"
+        environment["AGENTFORGE_DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONHASHSEED"] = "0"
+        source_root = Path(workspace).expanduser().resolve()
+        environment["PYTHONPATH"] = str(source_root / "backend")
+        return environment
 
     @staticmethod
     def classify_result(result: dict[str, Any]) -> str:

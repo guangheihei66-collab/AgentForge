@@ -49,6 +49,7 @@ describe('Agent approval-to-execution wiring', () => {
       plan_id: 'plan-1',
       plan_version: 1,
       actor: 'operator',
+      language: 'en-US',
     })
   })
 
@@ -80,6 +81,7 @@ describe('Agent approval-to-execution wiring', () => {
       plan_id: 'plan-1',
       plan_version: 1,
       actor: 'operator',
+      language: 'en-US',
     })
   })
 

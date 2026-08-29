@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..agents.replanning.models import ReplanOutcomeStatus, StepSummary
 from ..agents.replanning.service import ReplanningService
+from ..analyst.service import AnalystService
 from ..approvals.service import ApprovalService
 from ..capabilities.models import ResolvedExecutionSnapshot
 from ..capabilities.registry import build_default_capability_registry
@@ -46,6 +47,7 @@ class AgentRuntime:
         resolver: CapabilityResolver | None = None,
         observer: RuntimeObserver | None = None,
         replanning_service: ReplanningService | None = None,
+        analyst_service: AnalystService | None = None,
     ):
         self.session = session
         self.executor = executor
@@ -54,8 +56,16 @@ class AgentRuntime:
         )
         self.observer = observer or RuntimeObserver()
         self.replanning_service = replanning_service
+        self.analyst_service = analyst_service
 
-    def run(self, *, task_id: str, plan_id: str, plan_version: int) -> RuntimeResult:
+    def run(
+        self,
+        *,
+        task_id: str,
+        plan_id: str,
+        plan_version: int,
+        language: str = "en-US",
+    ) -> RuntimeResult:
         task = self.session.get(TaskRecord, task_id)
         plan = self.session.get(PlanRecord, plan_id)
         if task is None:
@@ -227,6 +237,12 @@ class AgentRuntime:
                     self._transition(
                         runtime_snapshot, task_id, RuntimeState.FAILED, summary
                     )
+                    self._synthesize_after_terminal(
+                        task_id=task_id,
+                        plan_id=plan_id,
+                        plan_version=plan_version,
+                        language=language,
+                    )
                     return RuntimeResult(
                         task_id,
                         plan_id,
@@ -236,20 +252,48 @@ class AgentRuntime:
                         runtime_snapshot.completed_steps,
                         tuple(observations),
                     )
-                outcome = self.replanning_service.create_successor(
-                    task_id=task_id,
-                    current_plan_id=plan_id,
-                    current_plan_version=plan_version,
-                    observation=observation,
-                    completed_steps=self._step_summaries(observations),
-                    attempted_steps=index + 1,
-                )
+                try:
+                    outcome = self.replanning_service.create_successor(
+                        task_id=task_id,
+                        current_plan_id=plan_id,
+                        current_plan_version=plan_version,
+                        observation=observation,
+                        completed_steps=self._step_summaries(observations),
+                        attempted_steps=index + 1,
+                    )
+                except Exception as exc:
+                    return self._fail_replan(
+                        task_id=task_id,
+                        plan_id=plan_id,
+                        plan_version=plan_version,
+                        runtime_snapshot=runtime_snapshot,
+                        observations=observations,
+                        language=language,
+                        error=exc,
+                    )
                 if outcome.status != ReplanOutcomeStatus.WAITING_APPROVAL:
+                    current_task = self.session.get(TaskRecord, task_id)
+                    if (
+                        current_task is not None
+                        and current_task.status == TaskStatus.RUNNING.value
+                    ):
+                        TaskService(self.session).transition_task(
+                            task_id,
+                            TaskStatus.FAILED,
+                            actor="agent_runtime",
+                            reason=outcome.summary,
+                        )
                     self._transition(
                         runtime_snapshot,
                         task_id,
                         RuntimeState.FAILED,
                         outcome.summary,
+                    )
+                    self._synthesize_after_terminal(
+                        task_id=task_id,
+                        plan_id=plan_id,
+                        plan_version=plan_version,
+                        language=language,
                     )
                     return RuntimeResult(
                         task_id,
@@ -287,6 +331,12 @@ class AgentRuntime:
                     RuntimeState.COMPLETED,
                     observation.decision_summary,
                 )
+                self._synthesize_after_terminal(
+                    task_id=task_id,
+                    plan_id=plan_id,
+                    plan_version=plan_version,
+                    language=language,
+                )
                 return RuntimeResult(
                     task_id=task_id,
                     plan_id=plan_id,
@@ -309,6 +359,12 @@ class AgentRuntime:
                 RuntimeState.FAILED,
                 observation.decision_summary,
             )
+            self._synthesize_after_terminal(
+                task_id=task_id,
+                plan_id=plan_id,
+                plan_version=plan_version,
+                language=language,
+            )
             return RuntimeResult(
                 task_id=task_id,
                 plan_id=plan_id,
@@ -321,6 +377,107 @@ class AgentRuntime:
 
         # Plan validation requires at least one step, but keep the invariant explicit.
         raise ValueError("Runtime cannot complete an empty plan")
+
+    def _fail_replan(
+        self,
+        *,
+        task_id: str,
+        plan_id: str,
+        plan_version: int,
+        runtime_snapshot: RuntimeSnapshot,
+        observations: list[RuntimeObservation],
+        language: str,
+        error: Exception,
+    ) -> RuntimeResult:
+        """Commit a terminal, operator-safe outcome for an unexpected replan failure."""
+
+        self.session.rollback()
+        validation_failure = isinstance(error, (TypeError, ValueError))
+        category = (
+            "RUNTIME_VALIDATION_FAILED"
+            if validation_failure
+            else "RUNTIME_REPLAN_FAILED"
+        )
+        summary = "Replanning failed validation" if validation_failure else "Replanning failed"
+        current_task = self.session.get(TaskRecord, task_id)
+        if (
+            current_task is not None
+            and current_task.status == TaskStatus.RUNNING.value
+        ):
+            TaskService(self.session).transition_task(
+                task_id,
+                TaskStatus.FAILED,
+                actor="agent_runtime",
+                reason=f"{summary}: {category}",
+            )
+        self._audit_event(
+            task_id,
+            "REPLAN_FAILED",
+            {
+                "plan_id": plan_id,
+                "plan_version": plan_version,
+                "error_category": category,
+                "summary": summary,
+                "decision": RuntimeDecision.FAIL.value,
+            },
+        )
+        self._transition(
+            runtime_snapshot,
+            task_id,
+            RuntimeState.FAILED,
+            summary,
+        )
+        self._synthesize_after_terminal(
+            task_id=task_id,
+            plan_id=plan_id,
+            plan_version=plan_version,
+            language=language,
+        )
+        return RuntimeResult(
+            task_id=task_id,
+            plan_id=plan_id,
+            plan_version=plan_version,
+            state=RuntimeState.FAILED,
+            decision=RuntimeDecision.FAIL,
+            completed_steps=runtime_snapshot.completed_steps,
+            observations=tuple(observations),
+        )
+
+    def _synthesize_after_terminal(
+        self,
+        *,
+        task_id: str,
+        plan_id: str,
+        plan_version: int,
+        language: str = "en-US",
+    ) -> None:
+        """Best-effort downstream synthesis after terminal facts are committed."""
+
+        if self.analyst_service is None:
+            return
+        try:
+            synthesis_kwargs = {
+                "task_id": task_id,
+                "plan_id": plan_id,
+                "plan_version": plan_version,
+            }
+            if language != "en-US":
+                synthesis_kwargs["language"] = language
+            self.analyst_service.synthesize(**synthesis_kwargs)
+        except Exception:
+            # Analyst failure must never change a committed governed outcome.
+            try:
+                self._audit_event(
+                    task_id,
+                    "ANALYST_SYNTHESIS_FAILED",
+                    {
+                        "plan_id": plan_id,
+                        "plan_version": plan_version,
+                        "failure_category": "ANALYST_SERVICE_ERROR",
+                    },
+                )
+            except Exception:
+                self.session.rollback()
 
     @staticmethod
     def _step_summaries(

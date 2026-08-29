@@ -9,8 +9,20 @@ from .base import (
     StructuredOutputMode,
 )
 from .config import ProviderConfig, build_provider, load_provider_config
-from .mock import MockLLMProvider
-from .openai_compatible import OpenAICompatibleProvider
+
+
+def __getattr__(name: str):
+    """Keep optional HTTP transport imports out of lightweight launcher paths."""
+
+    if name == "MockLLMProvider":
+        from .mock import MockLLMProvider
+
+        return MockLLMProvider
+    if name == "OpenAICompatibleProvider":
+        from .openai_compatible import OpenAICompatibleProvider
+
+        return OpenAICompatibleProvider
+    raise AttributeError(name)
 
 __all__ = [
     "LLMProvider",
