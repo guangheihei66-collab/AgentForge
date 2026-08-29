@@ -16,11 +16,15 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from .base import ProviderError
+from .base import ProviderError, StructuredOutputMode
 from .config import ProviderConfig, load_provider_config
 
 
 SUPPORTED_REAL_PROVIDERS = ("openai-compatible",)
+# The launcher settings flow targets providers that expose the broadly
+# supported OpenAI-compatible JSON mode.  Provider-specific schemas remain
+# available to explicitly configured process environments.
+SETTINGS_STRUCTURED_OUTPUT_MODE = StructuredOutputMode.JSON_OBJECT.value
 PROVIDER_ENVIRONMENT_KEYS = (
     "AGENTFORGE_LLM_PROVIDER",
     "AGENTFORGE_LLM_BASE_URL",
@@ -129,7 +133,7 @@ class ProviderSettingsSnapshot:
     provider: str = "unconfigured"
     base_url: str = ""
     model: str = ""
-    structured_output_mode: str = "json_schema"
+    structured_output_mode: str = SETTINGS_STRUCTURED_OUTPUT_MODE
     configured: bool = False
     credential_configured: bool = False
     validation_error: str | None = field(default=None, repr=False)
@@ -189,7 +193,10 @@ class ProviderSettingsStore:
         provider = _safe_text(payload.get("provider"), limit=_MAX_PROVIDER_LENGTH).lower()
         base_url = _safe_text(payload.get("base_url"), limit=_MAX_BASE_URL_LENGTH)
         model = _safe_text(payload.get("model"), limit=_MAX_MODEL_LENGTH)
-        mode = _safe_text(payload.get("structured_output_mode", "json_schema"), limit=32).lower()
+        mode = _safe_text(
+            payload.get("structured_output_mode", SETTINGS_STRUCTURED_OUTPUT_MODE),
+            limit=32,
+        ).lower()
         encoded = payload.get("api_key_dpapi")
         if not isinstance(encoded, str) or not encoded:
             api_key = ""
@@ -300,7 +307,7 @@ class ProviderSettingsStore:
             "AGENTFORGE_LLM_BASE_URL": base_url.strip(),
             "AGENTFORGE_LLM_MODEL": model.strip(),
             "AGENTFORGE_LLM_API_KEY": effective_key,
-            "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE": "json_schema",
+            "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE": SETTINGS_STRUCTURED_OUTPUT_MODE,
         }
         config = load_provider_config(environment, allow_default_mock=False)
         if not config.configured:

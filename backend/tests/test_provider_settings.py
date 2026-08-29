@@ -8,7 +8,12 @@ import subprocess
 
 import pytest
 
-from app.agents.providers.base import LLMResponse, ProviderError, ProviderErrorCategory
+from app.agents.providers.base import (
+    LLMResponse,
+    ProviderError,
+    ProviderErrorCategory,
+    StructuredOutputMode,
+)
 from app.agents.providers.settings import (
     ProviderSettingsStore,
     SecureStorageError,
@@ -61,6 +66,27 @@ def test_non_secret_provider_config_persists_outside_repository(tmp_path):
     assert snapshot.base_url == "https://provider.example/v1"
     assert snapshot.model == "example-model"
     assert snapshot.credential_configured is True
+
+
+def test_saved_real_provider_settings_use_json_object_mode(tmp_path):
+    store = make_store(tmp_path)
+
+    config = store.validate_candidate(
+        provider="openai-compatible",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-flash",
+        api_key=SECRET,
+    )
+
+    assert config.structured_output_mode is StructuredOutputMode.JSON_OBJECT
+
+    store.save(
+        provider="openai-compatible",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-flash",
+        api_key=SECRET,
+    )
+    assert store.load_provider_config().structured_output_mode is StructuredOutputMode.JSON_OBJECT
 
 
 def test_default_provider_config_is_user_local_and_not_worktree_bound(monkeypatch, tmp_path):

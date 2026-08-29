@@ -358,7 +358,7 @@ def test_real_provider_sends_json_object_request_without_schema_fields():
 @pytest.mark.parametrize(
     ("status", "category", "attempts"),
     [
-        (400, ProviderErrorCategory.INVALID_RESPONSE, 1),
+        (400, ProviderErrorCategory.INVALID_CONFIGURATION, 1),
         (401, ProviderErrorCategory.AUTHENTICATION_FAILED, 1),
         (403, ProviderErrorCategory.AUTHENTICATION_FAILED, 1),
         (408, ProviderErrorCategory.TIMEOUT, 3),
@@ -391,7 +391,7 @@ def test_status_mapping_and_retry_bounds(status, category, attempts):
     ("exception", "category"),
     [
         (httpx.TimeoutException("unsafe", request=httpx.Request("POST", "https://x")), ProviderErrorCategory.TIMEOUT),
-        (httpx.ConnectError("unsafe", request=httpx.Request("POST", "https://x")), ProviderErrorCategory.NETWORK_ERROR),
+        (httpx.ConnectError("unsafe", request=httpx.Request("POST", "https://x")), ProviderErrorCategory.ENDPOINT_UNREACHABLE),
     ],
 )
 def test_transient_transport_errors_retry_three_times(exception, category):
@@ -631,6 +631,126 @@ def test_connection_check_uses_fixed_non_plan_payload_and_bounded_budget(mode):
     serialized = json.dumps(captured["body"])
     assert "repository" not in serialized.lower()
     assert "business" not in serialized.lower()
+
+
+def test_connection_check_uses_json_object_and_explicit_json_prompt():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return raw_chat_response(json.dumps({"status": "ok"}), reasoning_content=SECRET)
+
+    provider = OpenAICompatibleProvider(
+        real_config(), transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+
+    response = provider.test_connection()
+
+    assert response.payload == {"status": "ok"}
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert "json" in json.dumps(captured["body"]).lower()
+    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert response.diagnostics["reasoning_content_present"] is True
+    assert SECRET not in repr(response)
+
+
+def test_connection_check_accepts_additional_openai_compatible_fields():
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-safe",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "example-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"status":"ok"}',
+                            "reasoning_content": SECRET,
+                            "annotations": [],
+                        },
+                        "finish_reason": "stop",
+                        "logprobs": None,
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                "system_fingerprint": "safe-fingerprint",
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        real_config(), transport=httpx.MockTransport(handler), sleeper=lambda _: None
+    )
+
+    response = provider.test_connection()
+
+    assert response.payload == {"status": "ok"}
+    assert response.diagnostics["reasoning_content_present"] is True
+    assert SECRET not in repr(response)
+
+
+def test_connection_check_empty_content_is_a_clean_invalid_response():
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(lambda _: raw_chat_response("", reasoning_content=SECRET)),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.test_connection()
+
+    assert exc.value.category.value == "INVALID_RESPONSE"
+    assert exc.value.diagnostics["failure_stage"] == "content_empty"
+    assert SECRET not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        (400, {"error": {"message": "invalid request"}}, "INVALID_CONFIGURATION"),
+        (402, {"error": {"message": "insufficient balance"}}, "INSUFFICIENT_BALANCE"),
+        (404, {"error": {"message": "model is unavailable"}}, "MODEL_UNAVAILABLE"),
+    ],
+)
+def test_connection_statuses_are_classified_without_exposing_error_body(
+    status, body, expected
+):
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(status, json=body)),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.test_connection()
+
+    assert exc.value.category.value == expected
+    assert "insufficient balance" not in str(exc.value).lower()
+    assert "model is unavailable" not in repr(exc.value.diagnostics).lower()
+
+
+def test_connection_endpoint_failure_has_a_specific_safe_category():
+    provider = OpenAICompatibleProvider(
+        real_config(),
+        transport=httpx.MockTransport(
+            lambda _: (_ for _ in ()).throw(
+                httpx.ConnectError(
+                    "private transport detail",
+                    request=httpx.Request("POST", "https://provider.example"),
+                )
+            )
+        ),
+        sleeper=lambda _: None,
+    )
+
+    with pytest.raises(ProviderError) as exc:
+        provider.test_connection()
+
+    assert exc.value.category.value == "ENDPOINT_UNREACHABLE"
+    assert "private transport detail" not in str(exc.value)
 
 
 @pytest.mark.parametrize("acknowledgement", [{}, {"status": "error"}])

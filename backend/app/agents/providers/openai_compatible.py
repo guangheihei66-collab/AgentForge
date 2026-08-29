@@ -20,6 +20,7 @@ from .config import ProviderConfig
 
 
 MAX_RESPONSE_BYTES = 64 * 1024
+MAX_ERROR_BODY_BYTES = 8 * 1024
 RETRY_DELAYS = (0.5, 1.5)
 SYSTEM_BOUNDARY = (
     "Return only the requested JSON object. You may propose capability "
@@ -79,7 +80,7 @@ class OpenAICompatibleProvider:
 
     def test_connection(self) -> LLMResponse:
         response = self._complete(
-            prompt="Return a JSON object with status set to ok.",
+            prompt='Return valid JSON only in exactly this shape: {"status":"ok"}.',
             output_schema={
                 "type": "object",
                 "properties": {"status": {"type": "string", "const": "ok"}},
@@ -88,8 +89,9 @@ class OpenAICompatibleProvider:
             },
             schema_name="agentforge_connection",
             max_tokens=128,
+            structured_output_mode=StructuredOutputMode.JSON_OBJECT,
         )
-        if response.payload != {"status": "ok"}:
+        if response.payload.get("status") != "ok":
             raise ProviderError(ProviderErrorCategory.INVALID_RESPONSE)
         return response
 
@@ -101,9 +103,11 @@ class OpenAICompatibleProvider:
         schema_name: str,
         max_tokens: int,
         system_instruction: str = "",
+        structured_output_mode: StructuredOutputMode | None = None,
     ) -> LLMResponse:
         response_format: dict[str, Any] = {"type": "json_object"}
-        if self.config.structured_output_mode.value == StructuredOutputMode.JSON_SCHEMA.value:
+        output_mode = structured_output_mode or self.config.structured_output_mode
+        if output_mode.value == StructuredOutputMode.JSON_SCHEMA.value:
             response_format = {
                 "type": "json_schema",
                 "json_schema": {
@@ -150,6 +154,13 @@ class OpenAICompatibleProvider:
                     safe_message="LLM provider timed out",
                 )
                 retry_after = None
+            except httpx.ConnectError:
+                error = ProviderError(
+                    ProviderErrorCategory.ENDPOINT_UNREACHABLE,
+                    retryable=True,
+                    safe_message="LLM provider endpoint is unreachable",
+                )
+                retry_after = None
             except (httpx.NetworkError, httpx.RemoteProtocolError):
                 error = ProviderError(
                     ProviderErrorCategory.NETWORK_ERROR,
@@ -186,8 +197,11 @@ class OpenAICompatibleProvider:
                 "POST", endpoint, headers=headers, json=dict(payload)
             ) as response:
                 if not 200 <= response.status_code < 300:
+                    error_body = OpenAICompatibleProvider._read_error_body(response)
                     raise self._status_error(
-                        response.status_code, response.headers.get("Retry-After")
+                        response.status_code,
+                        response.headers.get("Retry-After"),
+                        error_body,
                     )
                 chunks: list[bytes] = []
                 total = 0
@@ -202,7 +216,11 @@ class OpenAICompatibleProvider:
                 return b"".join(chunks), None
 
     @staticmethod
-    def _status_error(status: int, retry_after_value: str | None) -> ProviderError:
+    def _status_error(
+        status: int,
+        retry_after_value: str | None,
+        body: bytes = b"",
+    ) -> ProviderError:
         diagnostics = {
             "upstream_http_status": status,
             "failure_stage": "upstream_http",
@@ -211,6 +229,12 @@ class OpenAICompatibleProvider:
             return ProviderError(
                 ProviderErrorCategory.AUTHENTICATION_FAILED,
                 safe_message="LLM provider authentication failed",
+                diagnostics=diagnostics,
+            )
+        if status == 402:
+            return ProviderError(
+                ProviderErrorCategory.INSUFFICIENT_BALANCE,
+                safe_message="LLM provider balance is insufficient",
                 diagnostics=diagnostics,
             )
         if status == 408:
@@ -234,14 +258,66 @@ class OpenAICompatibleProvider:
                 safe_message="LLM provider server failed",
                 diagnostics=diagnostics,
             )
+        elif status in {400, 404, 422}:
+            category = OpenAICompatibleProvider._classify_error_body(status, body)
+            return ProviderError(category, diagnostics=diagnostics)
         else:
             return ProviderError(
-                ProviderErrorCategory.INVALID_RESPONSE,
-                safe_message="LLM provider returned an invalid HTTP response",
+                ProviderErrorCategory.PROVIDER_ERROR,
+                safe_message="LLM provider returned an unexpected HTTP response",
                 diagnostics=diagnostics,
             )
         error.retry_after = OpenAICompatibleProvider._retry_after(retry_after_value)
         return error
+
+    @staticmethod
+    def _read_error_body(response: httpx.Response) -> bytes:
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_bytes():
+            remaining = MAX_ERROR_BODY_BYTES - total
+            if remaining <= 0:
+                break
+            bounded = chunk[:remaining]
+            chunks.append(bounded)
+            total += len(bounded)
+        return b"".join(chunks)
+
+    @staticmethod
+    def _classify_error_body(status: int, body: bytes) -> ProviderErrorCategory:
+        del status
+        default = ProviderErrorCategory.INVALID_CONFIGURATION
+        try:
+            envelope = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return default
+        if not isinstance(envelope, dict):
+            return default
+        error = envelope.get("error")
+        values: list[str] = []
+        if isinstance(error, dict):
+            values.extend(value for value in error.values() if isinstance(value, str))
+        elif isinstance(error, str):
+            values.append(error)
+        values.extend(
+            value
+            for key, value in envelope.items()
+            if key in {"code", "type", "message"} and isinstance(value, str)
+        )
+        text = " ".join(values).casefold().replace("_", " ").replace("-", " ")
+        model_markers = ("model", "engine")
+        unavailable_markers = (
+            "not found",
+            "does not exist",
+            "unavailable",
+            "invalid model",
+            "unknown model",
+        )
+        if any(marker in text for marker in model_markers) and any(
+            marker in text for marker in unavailable_markers
+        ):
+            return ProviderErrorCategory.MODEL_UNAVAILABLE
+        return default
 
     @staticmethod
     def _retry_after(value: str | None) -> float | None:
