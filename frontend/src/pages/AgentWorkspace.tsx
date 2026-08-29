@@ -39,8 +39,9 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
   const currentPlan = detail?.plans.reduce((latest, candidate) => !latest || candidate.version > latest.version ? candidate : latest, undefined as TaskDetail['plans'][number] | undefined)
   const currentApproval = task && currentPlan ? approvals.find(item => item.task_id === task.id && item.plan_id === currentPlan.id && item.plan_version === currentPlan.version && item.decision === 'PENDING') : undefined
   const canResume = canResumeApprovedExecution({ task, detail, currentPlan })
+  const planningFailed = task?.status === 'FAILED' && !currentPlan
   const statusLabel = planning ? t('agent.status.planning') : task?.status ? t(agentStatusKey(task.status)) : undefined
-  const nextAction = planning ? t('agent.planningNext') : task?.status === 'WAITING_APPROVAL' ? t('agent.waitingNext') : task?.status === 'RUNNING' ? t('agent.runningNext') : task?.status === 'SUCCESS' ? t('agent.successNext') : task?.status === 'FAILED' ? t('agent.failedNext') : t('agent.startNext')
+  const nextAction = planning ? t('agent.planningNext') : task?.status === 'WAITING_APPROVAL' ? t('agent.waitingNext') : task?.status === 'RUNNING' ? t('agent.runningNext') : task?.status === 'SUCCESS' ? t('agent.successNext') : task?.status === 'FAILED' ? (planningFailed ? t('agent.planningFailed') : t('agent.failedNext')) : t('agent.startNext')
   const timeline = detail && report ? buildAgentTimeline({ detail, report, pendingApproval: approvals[0], transientPlanning: planning }) : []
   return <section className="page-stack">
     <div className="page-heading"><div><div className="eyebrow">{t('agent.eyebrow')}</div><h2>{t('agent.title')}</h2><p>{t('agent.description')}</p></div><Bot size={30} /></div>
@@ -50,7 +51,7 @@ export function AgentWorkspace({ projects, planning, error, onStart, approvals =
       <label>{t('common.labels.project')}<select aria-label={t('agent.selectProject')} value={projectId} onChange={event => setProjectId(event.target.value)} required><option value="">{t('agent.selectProject')}</option>{projects.filter(project => project.status === 'ACTIVE').map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
       <label>{t('agent.goal')}<textarea aria-label={t('agent.goal')} value={goal} onChange={event => setGoal(event.target.value)} placeholder={t('agent.goalPlaceholder')} required /></label>
       <button className="button button-primary" disabled={submitting || planning || !projectId || !goal.trim()}><Play size={15} /> {planning ? t('agent.starting') : t('agent.start')}</button>
-      {error && <div className="form-message" role="alert">{error}</div>}
+      {planningFailed ? <div className="form-message" role="alert">{t('agent.planningFailed')}</div> : error && <div className="form-message" role="alert">{error}</div>}
       {polling.refreshError && <div className="form-message" role="status">{t('agent.refreshError')}: {polling.refreshError}</div>}
     </form>
     {currentPlan && <AgentPlanCard plan={currentPlan} rawGoal={detail?.task.goal ?? ''} />}

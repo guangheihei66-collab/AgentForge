@@ -89,6 +89,32 @@ def test_saved_real_provider_settings_use_json_object_mode(tmp_path):
     assert store.load_provider_config().structured_output_mode is StructuredOutputMode.JSON_OBJECT
 
 
+def test_legacy_saved_schema_mode_is_migrated_for_real_provider_settings(tmp_path):
+    path = tmp_path / "provider.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "provider": "openai-compatible",
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-flash",
+                "structured_output_mode": "json_schema",
+                "api_key_dpapi": base64.b64encode(
+                    RoundTripProtector().protect(SECRET.encode())
+                ).decode("ascii"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = ProviderSettingsStore(config_path=path, protector=RoundTripProtector())
+
+    assert (
+        store.load_provider_config().structured_output_mode
+        is StructuredOutputMode.JSON_OBJECT
+    )
+    assert store.snapshot().structured_output_mode == "json_object"
+
+
 def test_default_provider_config_is_user_local_and_not_worktree_bound(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
     from app.agents.providers.settings import default_provider_config_path

@@ -86,10 +86,13 @@ describe('Agent Task -> Plan -> Approval orchestration', () => {
 
   it('does not create Approval or execute when planning fails', async () => {
     apiMock.createPlan.mockRejectedValueOnce(new Error('LLM planning failed: INVALID_RESPONSE'))
+    apiMock.getTaskDetail.mockResolvedValueOnce({ ...detail, task: { ...task, status: 'FAILED' }, plans: [], approvals: [] })
     const { result } = renderHook(() => useOperations())
     await act(async () => { await result.current.createAgentTask('project-1', 'RAW GOAL').catch(() => undefined) })
     expect(apiMock.createApproval).not.toHaveBeenCalled()
     expect(apiMock.executeTask).not.toHaveBeenCalled()
+    expect(apiMock.getTaskDetail).toHaveBeenCalledWith('task-1')
+    expect(result.current.detail.task.status).toBe('FAILED')
     expect(result.current.agentError).toContain('INVALID_RESPONSE')
   })
 

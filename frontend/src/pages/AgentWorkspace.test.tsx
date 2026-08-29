@@ -88,4 +88,14 @@ describe('Repository Analyst Agent workspace', () => {
     expect(screen.queryByRole('button', { name: 'Resume approved execution' })).not.toBeInTheDocument()
   })
 
+  it('shows a localized planning failure when the persisted Task has no Plan', () => {
+    const failedTask = { ...task, status: 'FAILED' as const }
+    const failedDetail = { task: failedTask, plans: [], approvals: [], executions: [], evidence: [], audit: [{ id: 'audit-failed', event_type: 'LLM_PLAN_FAILED', actor: 'planner', payload_summary: '{"failure_category":"NOT_CONFIGURED"}', correlation_id: 'corr', created_at: '' }] }
+    const failedReport = { task: failedTask, readiness: 'FAIL' as const, summary: 'Planning failed.', completed_steps: 0, failed_steps: 0, rejected_steps: 0, evidence: [], audit_count: 1, execution_count: 0 }
+    render(<AgentWorkspace projects={projects} planning={false} error={null} onStart={vi.fn()} task={failedTask} detail={failedDetail} report={failedReport} />)
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Planning failed. No Plan was created.')
+    expect(screen.getAllByText('Planning failed. No Plan was created.')).toHaveLength(2)
+  })
+
 })

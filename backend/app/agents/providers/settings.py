@@ -197,6 +197,16 @@ class ProviderSettingsStore:
             payload.get("structured_output_mode", SETTINGS_STRUCTURED_OUTPUT_MODE),
             limit=32,
         ).lower()
+        if (
+            provider in SUPPORTED_REAL_PROVIDERS
+            and mode == StructuredOutputMode.JSON_SCHEMA.value
+        ):
+            # Version 1 settings written by the earlier launcher used the
+            # provider-specific schema mode.  The current settings contract
+            # deliberately targets the broadly compatible JSON-object mode.
+            # Normalize in memory so a restart can use the saved settings
+            # without copying or rewriting the protected secret.
+            mode = SETTINGS_STRUCTURED_OUTPUT_MODE
         encoded = payload.get("api_key_dpapi")
         if not isinstance(encoded, str) or not encoded:
             api_key = ""

@@ -24,7 +24,7 @@ from app.agents.providers import (
     load_provider_config,
 )
 from app.agents.providers.openai_compatible import OpenAICompatibleProvider
-from app.api.routes.planning import get_llm_provider
+from app.api.routes.planning import get_llm_provider, get_planning_provider
 from app.api.routes.providers import connection_state, get_status_provider
 from app.capabilities.registry import build_default_capability_registry
 from app.capabilities.resolver import CapabilityResolutionError
@@ -1004,6 +1004,31 @@ def test_provider_failure_marks_task_failed_without_partial_plan(db_session):
     assert SECRET not in serialized
 
 
+def test_unexpected_provider_exception_marks_task_failed(db_session):
+    task = create_project_task(
+        db_session, title="Unexpected provider failure", goal="Check release"
+    )
+
+    class UnexpectedProvider(FakeProvider):
+        def generate_plan(self, request: LLMRequest) -> LLMResponse:
+            self.plan_calls += 1
+            raise RuntimeError("private transport detail must not be persisted")
+
+    with pytest.raises(RuntimeError):
+        PlannerAgent(db_session, UnexpectedProvider()).create_plan(task.id)
+
+    assert TaskService(db_session).get_task(task.id).status == TaskStatus.FAILED
+    assert db_session.query(PlanRecord).filter_by(task_id=task.id).count() == 0
+    failed_event = next(
+        event
+        for event in db_session.query(AuditEventRecord).filter_by(task_id=task.id).all()
+        if event.event_type == "LLM_PLAN_FAILED"
+    )
+    failed_payload = json.loads(failed_event.payload_summary)
+    assert failed_payload["failure_category"] == "PROVIDER_ERROR"
+    assert "private transport detail" not in failed_event.payload_summary
+
+
 def test_plan_validation_failure_audits_bounded_validation_metadata(db_session):
     task = create_project_task(
         db_session, title="Validation diagnostics", goal="Check release"
@@ -1036,7 +1061,7 @@ def test_planning_api_uses_injected_provider_without_silent_fallback(db_session)
             safe_message="Provider unavailable",
         )
     )
-    app.dependency_overrides[get_llm_provider] = lambda: failing
+    app.dependency_overrides[get_planning_provider] = lambda: failing
     try:
         with TestClient(app) as client:
             project_id = project_fixture(db_session).id
@@ -1053,6 +1078,41 @@ def test_planning_api_uses_injected_provider_without_silent_fallback(db_session)
     assert failing.plan_calls == 1
     with SessionLocal() as session:
         assert TaskService(session).get_task(task["id"]).status == TaskStatus.FAILED
+
+
+def test_planning_provider_preflight_failure_is_persisted_as_failed_task(
+    monkeypatch, db_session
+):
+    for name in (
+        "AGENTFORGE_LLM_PROVIDER",
+        "AGENTFORGE_LLM_BASE_URL",
+        "AGENTFORGE_LLM_MODEL",
+        "AGENTFORGE_LLM_API_KEY",
+        "AGENTFORGE_LLM_STRUCTURED_OUTPUT_MODE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with TestClient(app) as client:
+        project_id = project_fixture(db_session).id
+        task = client.post(
+            "/tasks",
+            json={"title": "Preflight failure", "goal": "Check", "project_id": project_id},
+        ).json()
+        response = client.post(f"/tasks/{task['id']}/plan", json={})
+
+    assert response.status_code == 503
+    with SessionLocal() as session:
+        persisted = TaskService(session).get_task(task["id"])
+        assert persisted.status == TaskStatus.FAILED
+        event_types = [
+            event.event_type
+            for event in session.query(AuditEventRecord)
+            .filter_by(task_id=task["id"])
+            .order_by(AuditEventRecord.created_at)
+            .all()
+        ]
+        assert "LLM_PLAN_REQUESTED" in event_types
+        assert "LLM_PLAN_FAILED" in event_types
 
 
 def set_real_environment(monkeypatch, *, api_key: str = SECRET):

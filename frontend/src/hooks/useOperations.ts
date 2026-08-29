@@ -186,8 +186,9 @@ export function useOperations() {
     agentCreateInFlight.current = true
     setAgentPlanning(true)
     setAgentError(null)
+    let created: TaskSummary | undefined
     try {
-      const created = await api.createTask({ project_id: projectId, title: 'Repository Analyst Agent', goal })
+      created = await api.createTask({ project_id: projectId, title: 'Repository Analyst Agent', goal })
       selectAgentTask(created.id)
       const plan = await api.createPlan(created.id, {
         source: 'agent',
@@ -207,6 +208,17 @@ export function useOperations() {
       await refreshTask(created.id)
       return created
     } catch (error) {
+      if (created) {
+        try {
+          // The Planner endpoint owns the authoritative failure transition.
+          // Refresh it before rendering the error so the console cannot retain
+          // the previous demo/Task projection after planning has failed.
+          await refreshTask(created.id)
+        } catch {
+          // Preserve the original planning error when the display-only refresh
+          // is unavailable.
+        }
+      }
       const message = error instanceof Error ? error.message : 'Agent planning failed.'
       setAgentError(message)
       throw error

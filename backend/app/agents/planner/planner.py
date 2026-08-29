@@ -192,47 +192,60 @@ class PlannerAgent:
             )
             self.session.commit()
         except (ProviderError, PlanValidationError, CapabilityResolutionError, ValueError) as exc:
-            self.session.rollback()
-            category = (
-                exc.category
-                if isinstance(exc, ProviderError)
-                else ProviderErrorCategory.INVALID_RESPONSE
-            )
-            self._audit_llm(
-                task_id,
-                "LLM_PLAN_FAILED",
-                {
-                    "provider": self.provider.provider_name,
-                    "model": self.provider.model_name,
-                    "failure_category": category.value,
-                    "validation_stage": stage,
-                    "attempt_count": getattr(exc, "attempt_count", 1),
-                    "duration_ms": getattr(exc, "duration_ms", 0),
-                    "provider_diagnostics": (
-                        getattr(exc, "diagnostics", {})
-                        if isinstance(exc, ProviderError)
-                        else {}
-                    ),
-                    "validation_diagnostics": (
-                        getattr(exc, "diagnostics", {})
-                        if isinstance(exc, PlanValidationError)
-                        else {}
-                    ),
-                },
-            )
-            self.tasks.transition_task(
-                task_id,
-                TaskStatus.FAILED,
-                actor="planner",
-                reason=f"Planning failed: {category.value}",
-            )
+            self._record_planning_failure(task_id, exc, stage)
             raise
+        except Exception as exc:
+            # A provider adapter must not strand a Task in PLANNING if it
+            # leaks an unexpected exception.  Convert it to the same safe
+            # provider contract exposed by known provider failures while
+            # preserving the original exception only as a private cause.
+            failure = ProviderError(ProviderErrorCategory.PROVIDER_ERROR)
+            self._record_planning_failure(task_id, failure, stage)
+            raise failure from exc
         self.tasks.transition_task(
             task_id,
             TaskStatus.WAITING_APPROVAL,
             reason=f"Plan version {record.version} validated",
         )
         return record
+
+    def _record_planning_failure(
+        self, task_id: str, exc: Exception, stage: str
+    ) -> None:
+        self.session.rollback()
+        category = (
+            exc.category
+            if isinstance(exc, ProviderError)
+            else ProviderErrorCategory.INVALID_RESPONSE
+        )
+        self._audit_llm(
+            task_id,
+            "LLM_PLAN_FAILED",
+            {
+                "provider": self.provider.provider_name,
+                "model": self.provider.model_name,
+                "failure_category": category.value,
+                "validation_stage": stage,
+                "attempt_count": getattr(exc, "attempt_count", 1),
+                "duration_ms": getattr(exc, "duration_ms", 0),
+                "provider_diagnostics": (
+                    getattr(exc, "diagnostics", {})
+                    if isinstance(exc, ProviderError)
+                    else {}
+                ),
+                "validation_diagnostics": (
+                    getattr(exc, "diagnostics", {})
+                    if isinstance(exc, PlanValidationError)
+                    else {}
+                ),
+            },
+        )
+        self.tasks.transition_task(
+            task_id,
+            TaskStatus.FAILED,
+            actor="planner",
+            reason=f"Planning failed: {category.value}",
+        )
 
     def _audit_llm(self, task_id: str, event_type: str, payload: dict[str, Any]) -> None:
         self.session.add(
