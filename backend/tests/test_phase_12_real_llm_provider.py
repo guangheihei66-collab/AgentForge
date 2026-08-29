@@ -955,6 +955,8 @@ def test_planning_prompt_states_strict_contract_types():
     assert "schema_version must be the integer 2" in prompt
     assert "step_id must be a non-empty string" in prompt
     assert "steps must contain 1-20 objects" in prompt
+    assert "Do not wrap the object in a plan key" in prompt
+    assert 'Do not use "step"; use "step_id"' in prompt
 
 
 @pytest.mark.parametrize(
