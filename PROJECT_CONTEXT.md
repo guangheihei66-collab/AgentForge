@@ -64,6 +64,8 @@ Project Capability policy defaults to empty and future registry additions are ne
 
 ## Next work
 
+- v0.2.1 maintenance is in progress on `fix/v0.2.1-task-reconciliation`: a server-owned, fail-closed reconciliation operation identifies only proven historical Runtime/Replan failures, transitions eligible `RUNNING` Tasks to `FAILED` through the lifecycle service, appends audit evidence, and performs no execution. Task Details exposes the action only when the backend declares eligibility. Live historical repair and release remain gated on full verification.
+
 - Run the separately approved live Phase 14 database backup and migration before using Projects with the existing runtime database.
 - Production platform capabilities such as managed persistence, RBAC, and write-capable tools remain future phases.
 - Final release gate: run the documented human smoke test on the running RC, including locale switching and one Repository Analyst Task. Do not create or execute that Task automatically; release/tag/version decisions require the human result.

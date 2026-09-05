@@ -2,7 +2,7 @@
 
 ## Enterprise AI Agent Governance Platform
 
-Current release: `v0.2.0`
+Current release: `v0.2.1`
 
 AgentForge is a self-hosted control plane for deploying controlled AI Agents in enterprise engineering workflows. It is an operations console, not a chatbot: operators can inspect intent, approve risk, observe execution, and trace results back to evidence and audit records.
 

@@ -12,7 +12,11 @@ from ...schemas.operations import (
     AnalystSynthesisRead,
     TaskDetailRead,
     TaskSummaryRead,
+    ReconciliationEligibilityRead,
+    ReconciliationRequest,
+    ReconciliationResultRead,
 )
+from ...services.task_reconciliation import ReconciliationConflict, TaskReconciliationService
 from ...storage.database import get_db
 from ...storage.orm import (
     ApprovalRecord,
@@ -38,6 +42,27 @@ def _task_or_404(task_id: str, db: Session) -> TaskRecord:
 def list_tasks(db: Session = Depends(get_db)) -> list[TaskSummaryRead]:
     tasks = db.query(TaskRecord).order_by(TaskRecord.created_at.desc()).all()
     return [TaskSummaryRead.model_validate(task) for task in tasks]
+
+
+@router.get("/tasks/{task_id}/reconciliation", response_model=ReconciliationEligibilityRead)
+def reconciliation_eligibility(task_id: str, db: Session = Depends(get_db)):
+    try:
+        return TaskReconciliationService(db).eligibility(task_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Task not found") from exc
+
+
+@router.post("/tasks/{task_id}/reconciliation", response_model=ReconciliationResultRead)
+def reconcile_task(task_id: str, payload: ReconciliationRequest, db: Session = Depends(get_db)):
+    try:
+        return TaskReconciliationService(db).reconcile(task_id, actor=payload.actor)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Task not found") from exc
+    except ReconciliationConflict as exc:
+        raise HTTPException(status_code=409, detail={
+            "eligible": False,
+            "reason_code": exc.status.reason_code,
+        }) from exc
 
 
 @router.get("/approvals/pending", response_model=list[ApprovalQueueRead])

@@ -24,7 +24,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="AgentForge Backend", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="AgentForge Backend", version="0.2.1", lifespan=lifespan)
 allowed_origins = [
     origin.strip()
     for origin in os.getenv(

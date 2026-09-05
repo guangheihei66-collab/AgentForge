@@ -1,4 +1,4 @@
-import type { AgentApprovalCommand, ApprovalQueueItem, Approval, Diagnostics, Plan, ProjectDetail, ProjectSummary, ProviderStatus, Report, RuntimeResult, TaskDetail, TaskSummary } from '../types'
+import type { AgentApprovalCommand, ApprovalQueueItem, Approval, Diagnostics, Plan, ProjectDetail, ProjectSummary, ProviderStatus, ReconciliationEligibility, ReconciliationResult, Report, RuntimeResult, TaskDetail, TaskSummary } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
 
@@ -35,6 +35,8 @@ export const api = {
   getTaskDetail: (id: string) => request<TaskDetail>(`/tasks/${id}/detail`).then(normalizeTaskDetail),
   getPendingApprovals: () => request<ApprovalQueueItem[]>('/approvals/pending'),
   getReport: (id: string) => request<Report>(`/tasks/${id}/report`),
+  getReconciliationEligibility: (id: string) => request<ReconciliationEligibility>(`/tasks/${id}/reconciliation`),
+  reconcileTask: (id: string) => request<ReconciliationResult>(`/tasks/${id}/reconciliation`, { method: 'POST', body: JSON.stringify({ actor: 'operator' }) }),
   getProviderStatus: () => request<ProviderStatus>('/llm/provider'),
   testProviderConnection: () => request<ProviderStatus>('/llm/provider/test', { method: 'POST' }),
   getDiagnostics: () => request<Diagnostics>('/diagnostics'),

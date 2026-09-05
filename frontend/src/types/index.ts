@@ -114,6 +114,9 @@ export type Execution = { id: string; tool_name: string; action: string; status:
 export type Evidence = { id: string; summary: string; artifact_path?: string; content_hash?: string; created_at: string }
 export type AuditEvent = { id: string; event_type: string; actor: string; payload_summary: string; correlation_id: string; created_at: string }
 export type TaskDetail = { task: TaskSummary; plans: Plan[]; approvals: Approval[]; executions: Execution[]; evidence: Evidence[]; audit: AuditEvent[] }
+
+export type ReconciliationEligibility = { task_id: string; eligible: boolean; reason_code: string }
+export type ReconciliationResult = ReconciliationEligibility & { previous_state: string; final_state: string; reconciled: boolean }
 export type ApprovalQueueItem = { id: string; approval_id?: string | null; task_id: string; task_title: string; plan_id: string; plan_version: number; decision: string; requested_by: string; created_at: string; plan_json: PlanDocument; resolved_snapshot: ApprovalSnapshot | null }
 export type AnalystOutputLanguage = 'en-US' | 'zh-CN'
 export type AgentApprovalCommand = { approval_id: string; plan_id: string; plan_version: number; actor: string; language?: AnalystOutputLanguage }

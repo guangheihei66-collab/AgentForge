@@ -13,6 +13,7 @@ import { Diagnostics } from './pages/Diagnostics'
 import { AgentWorkspace } from './pages/AgentWorkspace'
 import { LanguageSelector } from './components/LanguageSelector'
 import { setDocumentLocale } from './i18n/locale'
+import { api } from './api/client'
 
 export function App() {
   const { t, i18n } = useTranslation()
@@ -31,7 +32,7 @@ export function App() {
     {page === 'projects' && <Projects projects={ops.projects} onOpen={async (id) => { await ops.chooseProject(id); setPage(current => current === 'projects' ? 'project-detail' : current) }} onCreate={ops.createProject} onValidate={ops.validateWorkspace} />}
     {page === 'project-detail' && <ProjectDetail project={ops.project} onBack={() => setPage('projects')} onCreateTask={ops.createTask} onArchive={ops.archiveProject} />}
     {page === 'approvals' && <Approvals approvals={ops.approvals} actionError={ops.actionError} onApprove={(id) => void ops.act('approve', id)} onReject={(id) => void ops.act('reject', id)} onCancel={() => void ops.act('cancel')} onOpenInAgentWorkspace={async (taskId) => { await ops.chooseTask(taskId); setPage('agent') }} />}
-    {page === 'detail' && <TaskDetail detail={ops.detail} onBack={() => setPage('dashboard')} onReport={() => setPage('report')} />}
+    {page === 'detail' && <TaskDetail detail={ops.detail} onReconcile={async () => { await api.reconcileTask(ops.detail.task.id); await ops.refreshTask(ops.detail.task.id) }} onBack={() => setPage('dashboard')} onReport={() => setPage('report')} />}
     {page === 'report' && <Report report={ops.report} onBack={() => setPage('detail')} />}
     {page === 'diagnostics' && <Diagnostics />}
   </Shell></div>

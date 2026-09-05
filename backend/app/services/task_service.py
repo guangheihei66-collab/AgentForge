@@ -49,6 +49,7 @@ class TaskService:
         *,
         actor: str = "system",
         reason: str = "",
+        commit: bool = True,
     ) -> Task:
         task = self.tasks.get_by_id(task_id)
         if task is None:
@@ -69,7 +70,8 @@ class TaskService:
             actor,
             f"{previous.value} -> {target.value}; {reason}".strip(),
         )
-        self.session.commit()
+        if commit:
+            self.session.commit()
         return updated
 
     def _audit(

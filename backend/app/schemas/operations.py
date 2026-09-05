@@ -68,3 +68,23 @@ class ReportRead(BaseModel):
     audit_count: int
     execution_count: int
     analyst: AnalystSynthesisRead
+
+
+class ReconciliationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    actor: str
+
+
+class ReconciliationEligibilityRead(BaseModel):
+    task_id: str
+    eligible: bool
+    reason_code: str
+
+
+class ReconciliationResultRead(BaseModel):
+    task_id: str
+    previous_state: str
+    final_state: str
+    reconciled: bool
+    eligible: bool
+    reason_code: str
