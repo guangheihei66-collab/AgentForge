@@ -1,10 +1,14 @@
 """Regression coverage for historical failed RUNNING task reconciliation."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.task_reconciliation import TaskReconciliationService
 from app.storage.orm import (
     ApprovalRecord,
     AuditEventRecord,
@@ -189,3 +193,39 @@ def test_runtime_activity_after_historical_failure_refuses_reconciliation(db_ses
     assert response.status_code == 200
     assert response.json()["eligible"] is False
     assert response.json()["reason_code"] == "RUNTIME_ACTIVITY_AFTER_FAILURE"
+
+
+def test_audit_commit_failure_rolls_back_task_state(db_session, monkeypatch):
+    task = _historical_failure(db_session)
+    before = _counts(db_session, task.id)
+
+    def fail_commit():
+        raise RuntimeError("simulated audit persistence failure")
+
+    monkeypatch.setattr(db_session, "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="simulated audit"):
+        TaskReconciliationService(db_session).reconcile(task.id, actor="operator")
+    db_session.expire_all()
+    assert db_session.get(TaskRecord, task.id).status == "RUNNING"
+    assert _counts(db_session, task.id) == before
+
+
+def test_competing_reconciliation_requests_apply_once(db_session):
+    task = _historical_failure(db_session)
+    before_audit = _counts(db_session, task.id)["audit"]
+
+    def reconcile_once():
+        with TestClient(app) as client:
+            response = client.post(
+                f"/tasks/{task.id}/reconciliation", json={"actor": "operator"}
+            )
+            return response.status_code, response.json()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: reconcile_once(), range(2)))
+
+    assert [status for status, _ in results] == [200, 200]
+    assert sorted(result["reconciled"] for _, result in results) == [False, True]
+    db_session.expire_all()
+    assert db_session.get(TaskRecord, task.id).status == "FAILED"
+    assert _counts(db_session, task.id)["audit"] == before_audit + 2
